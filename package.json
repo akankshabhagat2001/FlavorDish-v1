@@ -1,0 +1,17 @@
+{
+    "name": "flavorfinder",
+    "private": true,
+    "version": "0.0.0",
+    "scripts": {
+        "dev:frontend": "cd frontend && npm run dev",
+        "build:frontend": "cd frontend && npm run build",
+        "dev:backend": "cd backend/server && npm run dev",
+        "start:backend": "cd backend/server && npm start",
+        "seed:backend": "cd backend/server && npm run seed",
+        "install:all": "npm install && cd frontend && npm install && cd ../backend/server && npm install"
+    },
+    "workspaces": [
+        "frontend",
+        "backend/server"
+    ]
+}

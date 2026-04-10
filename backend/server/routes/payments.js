@@ -1,0 +1,184 @@
+import express from 'express';
+import Order from '../models/Order.js';
+import User from '../models/User.js';
+import Restaurant from '../models/Restaurant.js';
+import { authenticate, authorize } from '../middleware/auth.js';
+
+const router = express.Router();
+
+// Process an online payment for an order
+router.post('/process', authenticate, authorize('customer'), async(req, res) => {
+    try {
+        const { orderId, amount, method } = req.body;
+
+        if (!orderId || !amount || !method) {
+            return res.status(400).json({ message: 'Missing payment details.' });
+        }
+
+        const order = await Order.findById(orderId);
+        if (!order) {
+            return res.status(404).json({ message: 'Order not found.' });
+        }
+
+        if (order.customer.toString() !== req.user._id.toString()) {
+            return res.status(403).json({ message: 'Access denied.' });
+        }
+
+        if (order.paymentStatus === 'paid') {
+            return res.status(400).json({ message: 'Order already paid.' });
+        }
+
+        // Simulated gateway flow
+        order.paymentStatus = 'paid';
+        order.paymentMethod = 'online';
+        order.paymentGateway = method;
+        order.paymentTransactionId = `TXN-${Date.now()}-${Math.floor(Math.random() * 10000)}`;
+
+        await order.save();
+
+        return res.json({ message: 'Payment successful.', order });
+    } catch (error) {
+        console.error('Payment processing error:', error);
+        return res.status(500).json({ message: 'Payment processing failed.' });
+    }
+});
+
+const calculateShares = (order) => {
+    const deliveryShare = Math.round(order.total * 0.05); // 5% delivery partner fee
+    const platformFee = Math.round(order.total * 0.03); // 3% platform fee
+    const restaurantShare = Math.max(0, Math.round(order.total - deliveryShare - platformFee));
+    return { restaurantShare, deliveryShare, platformFee };
+};
+
+// Auto release pending settlements once order is delivered + 10 days passed
+const releasePendingSettlements = async() => {
+    try {
+        const tenDaysAgo = new Date(Date.now() - (10 * 24 * 60 * 60 * 1000));
+        const pendingOrders = await Order.find({
+            status: 'delivered',
+            actualDeliveryTime: { $lte: tenDaysAgo },
+            settlementStatus: 'pending'
+        });
+
+        for (const ord of pendingOrders) {
+            const { restaurantShare, deliveryShare } = calculateShares(ord);
+            // restaurant wallet
+            const restaurant = await Restaurant.findById(ord.restaurant);
+            if (restaurant) {
+                restaurant.walletBalance = (restaurant.walletBalance || 0) + restaurantShare;
+                await restaurant.save();
+            }
+            // delivery partner wallet
+            if (ord.deliveryPartner) {
+                const partner = await User.findById(ord.deliveryPartner);
+                if (partner) {
+                    partner.walletBalance = (partner.walletBalance || 0) + deliveryShare;
+                    await partner.save();
+                }
+            }
+            ord.restaurantPayout = restaurantShare;
+            ord.deliveryPayout = deliveryShare;
+            ord.settlementStatus = 'settled';
+            await ord.save();
+        }
+
+        return pendingOrders;
+    } catch (error) {
+        console.error('Auto release settlements error:', error);
+        return [];
+    }
+};
+
+// Schedule it when module is loaded
+setInterval(releasePendingSettlements, 6 * 60 * 60 * 1000); // every 6 hours
+
+// Manual trigger for admin/restaurant
+router.post('/release/auto', authenticate, authorize('restaurant_owner', 'admin'), async(req, res) => {
+    try {
+        const releasedOrders = await releasePendingSettlements();
+        res.json({ message: 'Auto settlements processed.', releasedOrdersCount: releasedOrders.length });
+    } catch (error) {
+        console.error('Auto release manual trigger:', error);
+        res.status(500).json({ message: 'Failed to perform auto release.' });
+    }
+});
+
+// Release restaurant payout
+router.post('/release/restaurant/:orderId', authenticate, authorize('restaurant_owner', 'admin'), async(req, res) => {
+    try {
+        const { orderId } = req.params;
+        const order = await Order.findById(orderId);
+        if (!order) return res.status(404).json({ message: 'Order not found.' });
+        if (order.status !== 'delivered') return res.status(400).json({ message: 'Only delivered orders are eligible for settlements.' });
+
+        const restaurant = await Restaurant.findById(order.restaurant);
+        if (!restaurant) return res.status(404).json({ message: 'Restaurant not found.' });
+
+        // Authorization check for owner
+        if (req.user.role === 'restaurant_owner' && restaurant.owner.toString() !== req.user._id.toString()) {
+            return res.status(403).json({ message: 'Access denied.' });
+        }
+
+        const { restaurantShare } = calculateShares(order);
+
+        restaurant.walletBalance = (restaurant.walletBalance || 0) + restaurantShare;
+        await restaurant.save();
+
+        order.settlementStatus = 'restaurant_paid';
+        order.restaurantPayout = restaurantShare;
+        await order.save();
+
+        return res.json({ message: 'Restaurant payout released.', restaurant, order });
+    } catch (error) {
+        console.error('Restaurant payout error:', error);
+        return res.status(500).json({ message: 'Failed to release restaurant payout.' });
+    }
+});
+
+// Release delivery partner payout
+router.post('/release/delivery/:orderId', authenticate, authorize('delivery_partner', 'admin'), async(req, res) => {
+    try {
+        const { orderId } = req.params;
+        const order = await Order.findById(orderId);
+        if (!order) return res.status(404).json({ message: 'Order not found.' });
+        if (order.status !== 'delivered') return res.status(400).json({ message: 'Only delivered orders are eligible for settlements.' });
+
+        if (!order.deliveryPartner) return res.status(400).json({ message: 'No delivery partner assigned.' });
+
+        const partner = await User.findById(order.deliveryPartner);
+        if (!partner) return res.status(404).json({ message: 'Delivery partner not found.' });
+
+        const { deliveryShare } = calculateShares(order);
+
+        partner.walletBalance = (partner.walletBalance || 0) + deliveryShare;
+        await partner.save();
+
+        order.deliveryPayout = deliveryShare;
+        await order.save();
+
+        return res.json({ message: 'Delivery partner payout released.', partner, order });
+    } catch (error) {
+        console.error('Delivery payout error:', error);
+        return res.status(500).json({ message: 'Failed to release delivery partner payout.' });
+    }
+});
+
+// Get aggregated balance for logged-in partner/restaurant
+router.get('/balances', authenticate, async(req, res) => {
+    try {
+        if (req.user.role === 'restaurant_owner') {
+            const restaurant = await Restaurant.findOne({ owner: req.user._id });
+            return res.json({ walletBalance: restaurant?.walletBalance || 0 });
+        }
+        if (req.user.role === 'delivery_partner') {
+            const partner = await User.findById(req.user._id);
+            return res.json({ walletBalance: partner?.walletBalance || 0 });
+        }
+        return res.json({ walletBalance: 0 });
+    } catch (error) {
+        console.error('Balance fetch error:', error);
+        return res.status(500).json({ message: 'Failed to retrieve balances.' });
+    }
+});
+
+export default router;

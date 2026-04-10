@@ -1,0 +1,11 @@
+export { authService, default as api } from './authService';
+export { foodService } from './foodService';
+export { restaurantService } from './restaurantService';
+export { orderService } from './orderService';
+export { suggestionService } from './suggestionService';
+export { userService } from './userService';
+export { adminService } from './adminService';
+export { paymentService } from './paymentService';
+export { chatService } from './chatService';
+export { reviewService } from './reviewService';
+export { notificationService } from './notificationService';

@@ -1,0 +1,7 @@
+{
+  "name": "FlavorFinder",
+  "description": "AI-Powered Restaurant Discovery and Delivery",
+  "requestFramePermissions": [
+    "geolocation"
+  ]
+}

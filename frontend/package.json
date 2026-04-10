@@ -1,0 +1,37 @@
+{
+    "name": "flavorfinder",
+    "private": true,
+    "version": "0.0.0",
+    "type": "module",
+    "scripts": {
+        "dev": "vite",
+        "build": "vite build",
+        "preview": "vite preview",
+        "lint": "tsc --noEmit"
+    },
+    "dependencies": {
+        "@google/genai": "^1.38.0",
+        "axios": "^1.13.6",
+        "html2canvas": "^1.4.1",
+        "jspdf": "^4.2.1",
+        "leaflet": "^1.9.4",
+        "lucide-react": "^1.7.0",
+        "mapbox-gl": "^3.0.0",
+        "react": "^19.2.4",
+        "react-dom": "^19.2.4",
+        "react-leaflet": "^5.0.0",
+        "recharts": "^3.7.0",
+        "socket.io-client": "^4.7.4"
+    },
+    "devDependencies": {
+        "@types/node": "^22.14.0",
+        "@types/react": "^19.2.14",
+        "@types/react-dom": "^19.2.3",
+        "@vitejs/plugin-react": "^5.0.0",
+        "autoprefixer": "^10.4.16",
+        "postcss": "^8.4.32",
+        "tailwindcss": "^3.3.6",
+        "typescript": "~5.8.2",
+        "vite": "^6.2.0"
+    }
+}

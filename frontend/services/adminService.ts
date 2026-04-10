@@ -1,0 +1,98 @@
+import api from './authService';
+
+export const adminService = {
+  getStats: async () => {
+    const response = await api.get('/admin/stats');
+    return response.data;
+  },
+
+  getOrders: async (params?: {
+    status?: string;
+    date?: string;
+    page?: number;
+    limit?: number;
+  }) => {
+    const response = await api.get('/admin/orders', { params });
+    return response.data;
+  },
+
+  getRevenue: async (params?: {
+    startDate?: string;
+    endDate?: string;
+    groupBy?: 'day' | 'week' | 'month';
+  }) => {
+    const response = await api.get('/admin/revenue', { params });
+    return response.data;
+  },
+
+  getTopRestaurants: async (params?: {
+    limit?: number;
+    period?: 'week' | 'month' | 'year';
+  }) => {
+    const response = await api.get('/admin/top-restaurants', { params });
+    return response.data;
+  },
+
+  getTopFoods: async (params?: {
+    limit?: number;
+    period?: 'week' | 'month' | 'year';
+  }) => {
+    const response = await api.get('/admin/top-foods', { params });
+    return response.data;
+  },
+
+  getUserGrowth: async (params?: {
+    startDate?: string;
+    endDate?: string;
+    groupBy?: 'day' | 'week' | 'month';
+  }) => {
+    const response = await api.get('/admin/user-growth', { params });
+    return response.data;
+  },
+
+  getOrderAnalytics: async (params?: {
+    startDate?: string;
+    endDate?: string;
+  }) => {
+    const response = await api.get('/admin/order-analytics', { params });
+    return response.data;
+  },
+
+  getSystemHealth: async () => {
+    const response = await api.get('/admin/system-health');
+    return response.data;
+  },
+
+  exportData: async (type: 'users' | 'orders' | 'restaurants' | 'foods', format: 'csv' | 'json') => {
+    const response = await api.get(`/admin/export/${type}`, {
+      params: { format },
+      responseType: 'blob'
+    });
+    return response.data;
+  },
+
+  getActivityLogs: async (params?: { page?: number; limit?: number; action?: string; role?: string }) => {
+      const response = await api.get('/activity', { params });
+      return response.data;
+  },
+
+  updateUserRole: async (userId: string, role: string) => {
+      const response = await api.put(`/users/${userId}/role`, { role });
+      return response.data;
+  },
+
+  updateUserStatus: async (userId: string, isActive: boolean) => {
+      const response = await api.put(`/users/${userId}/status`, { isActive });
+      return response.data;
+  },
+
+  getSuggestions: async (status?: string) => {
+      const response = await api.get('/suggestions', { params: { status } });
+      return response.data;
+  },
+
+  updateSuggestionStatus: async (suggestionId: string, status: string) => {
+      const response = await api.put(`/suggestions/${suggestionId}/status`, { status });
+      return response.data;
+  }
+};

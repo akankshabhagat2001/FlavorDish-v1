@@ -1,0 +1,18 @@
+
+  # 📧 Add these lines to your server/.env file
+
+# ===== EMAIL OTP (Gmail) =====
+GMAIL_USER=your-email@gmail.com
+GMAIL_APP_PASSWORD=xxxx xxxx xxxx xxxx
+
+# ===== SMS OTP - Choose ONE =====
+
+# Option 1: Fast2SMS (India-friendly)
+SMS_SERVICE=fast2sms
+FAST2SMS_API_KEY=your-api-key-here
+
+# Option 2: Twilio (Global coverage)
+# SMS_SERVICE=twilio
+# TWILIO_ACCOUNT_SID=your-account-sid
+# TWILIO_AUTH_TOKEN=your-auth-token
+# TWILIO_PHONE=+1234567890

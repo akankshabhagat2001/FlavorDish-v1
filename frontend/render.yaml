@@ -1,0 +1,18 @@
+services:
+  - type: web
+    name: flavorfinder-api
+    env: node
+    plan: free
+    buildCommand: cd server && npm install
+    startCommand: cd server && npm start
+    envVars:
+      - key: MONGODB_URI
+        value: ${MONGODB_URI}
+      - key: JWT_SECRET
+        value: ${JWT_SECRET}
+      - key: FRONTEND_URL
+        value: ${FRONTEND_URL}
+      - key: PORT
+        value: 5000
+      - key: NODE_ENV
+        value: production
