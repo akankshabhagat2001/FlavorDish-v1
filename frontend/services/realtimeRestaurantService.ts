@@ -1,8 +1,9 @@
 // Real-time restaurant data service with automatic sync
 import { io } from 'socket.io-client';
 import api from './apiClient';
+import { SOCKET_URL } from './runtimeConfig';
 
-interface RealtimeRestaurantService {
+interface IRealtimeRestaurantService {
   getRestaurants: (options?: any) => Promise<any[]>;
   subscribeToUpdates: (callback: (restaurants: any[]) => void) => void;
   unsubscribeFromUpdates: () => void;
@@ -11,22 +12,19 @@ interface RealtimeRestaurantService {
   isConnected: () => boolean;
 }
 
-class RealtimeRestaurantService implements RealtimeRestaurantService {
+class RealtimeRestaurantService implements IRealtimeRestaurantService {
   private socket: any = null;
   private updateCallbacks: ((restaurants: any[]) => void)[] = [];
   private reconnectAttempts = 0;
   private maxReconnectAttempts = 5;
   private autoRefreshInterval: any = null;
-  private apiBaseUrl = import.meta.env.VITE_API_BASE_URL || 'http://localhost:5000';
-
   constructor() {
     this.connect();
   }
 
   connect() {
     try {
-      const socketUrl = this.apiBaseUrl.replace(':5000', '');
-      this.socket = io(socketUrl, {
+      this.socket = io(SOCKET_URL, {
         reconnection: true,
         reconnectionDelay: 1000,
         reconnectionDelayMax: 5000,

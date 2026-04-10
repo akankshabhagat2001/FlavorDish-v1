@@ -6,20 +6,46 @@
 
 ## 🚀 Quick Start
 
-### 1. Start MongoDB  
+### 1. Configure frontend env
+```bash
+cp .env.example .env
+```
+
+### 2. Configure backend env
+```bash
+cd backend/server
+cp .env.example .env
+```
+
+### 3. Start MongoDB (local only)
 ```bash
 mongod
 ```
 
-### 2. Start Backend (port 5001)
+### 4. Start Backend (port 5000)
 ```bash
-cd server && npm start
+cd backend/server && npm install && npm start
 ```
 
-### 3. Start Frontend (port 3000/3001)
+### 5. Start Frontend (port 3000/3001)
 ```bash
-npm run dev
+cd frontend && npm install && npm run dev
 ```
+
+---
+
+## Market Launch Checklist (Render MVP)
+
+1. Create MongoDB Atlas cluster and set `MONGODB_URI`.
+2. Deploy backend from `backend/server` as a Render Web Service.
+3. Set backend env vars: `NODE_ENV=production`, `PORT=5000`, `MONGODB_URI`, `JWT_SECRET`, `FRONTEND_URL`.
+4. Verify backend checks:
+   - `GET /health` returns 200
+   - `GET /ready` returns 200 after DB connection
+5. Deploy frontend from `frontend` as a Render Static Site.
+6. Set frontend env vars: `VITE_API_URL` (backend URL), `VITE_MAPBOX_TOKEN`.
+7. Update backend `FRONTEND_URL` to the deployed frontend domain.
+8. Smoke test: register/login, place order, review API call, and real-time socket updates.
 
 ---
 
@@ -504,11 +530,15 @@ Password: admin123
 ## 🚀 Deploy to Production
 
 ```bash
-# Build
-npm run build
-
-# Deploy to Render/Vercel
-# Add .env with production values
+# Backend (Render Web Service)
+# Root: backend/server
+# Build Command: npm install
+# Start Command: npm start
+#
+# Frontend (Render Static Site)
+# Root: frontend
+# Build Command: npm install && npm run build
+# Publish Directory: dist
 ```
 
 ---
@@ -516,7 +546,7 @@ npm run build
 ## ✨ Key Fixes Applied
 
 ✅ User registration implemented
-✅ Backend API port fixed (5001)
+✅ Backend API port standardized (5000)
 ✅ Syntax errors fixed
 ✅ Background images added
 ✅ Lightweight & dependency-optimized

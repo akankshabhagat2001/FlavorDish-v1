@@ -3,16 +3,30 @@ services:
     name: flavorfinder-api
     env: node
     plan: free
-    buildCommand: cd server && npm install
-    startCommand: cd server && npm start
+    rootDir: backend/server
+    buildCommand: npm install
+    startCommand: npm start
+    healthCheckPath: /health
     envVars:
-      - key: MONGODB_URI
-        value: ${MONGODB_URI}
-      - key: JWT_SECRET
-        value: ${JWT_SECRET}
-      - key: FRONTEND_URL
-        value: ${FRONTEND_URL}
-      - key: PORT
-        value: 5000
       - key: NODE_ENV
         value: production
+      - key: PORT
+        value: 5000
+      - key: MONGODB_URI
+        sync: false
+      - key: JWT_SECRET
+        sync: false
+      - key: FRONTEND_URL
+        sync: false
+
+  - type: static
+    name: flavorfinder-web
+    rootDir: frontend
+    buildCommand: npm install && npm run build
+    staticPublishPath: dist
+    pullRequestPreviewsEnabled: false
+    envVars:
+      - key: VITE_API_URL
+        sync: false
+      - key: VITE_MAPBOX_TOKEN
+        sync: false

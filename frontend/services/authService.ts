@@ -1,27 +1,8 @@
 import axios from 'axios';
-
-const normalizeApiUrl = (url: string) => {
-  let normalized = url.trim();
-  if (normalized.endsWith('/')) {
-    normalized = normalized.slice(0, -1);
-  }
-  if (normalized.endsWith('/api')) {
-    normalized = normalized.slice(0, -4);
-  }
-  return normalized;
-};
-
-const resolveApiBaseUrl = () => {
-  const envUrl = (import.meta.env as any).VITE_API_URL;
-  if (envUrl) return normalizeApiUrl(envUrl);
-  return 'http://localhost:5001';
-};
-
-const API_BASE_URL = resolveApiBaseUrl();
-const FULL_API_URL = `${API_BASE_URL}/api`;
+import { API_URL } from './runtimeConfig';
 
 const api = axios.create({
-  baseURL: FULL_API_URL,
+  baseURL: API_URL,
   headers: {
     'Content-Type': 'application/json',
   },
@@ -43,7 +24,7 @@ api.interceptors.response.use(
     if (error.response?.status === 401) {
       localStorage.removeItem('token');
       localStorage.removeItem('user');
-      window.location.href = '/login';
+      window.location.href = '/';
     }
     return Promise.reject(error);
   }

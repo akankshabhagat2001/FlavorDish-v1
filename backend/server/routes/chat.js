@@ -1,18 +1,17 @@
 import express from 'express';
 import { ChatConversation, ChatMessage } from '../models/Chat.js';
 import Order from '../models/Order.js';
+import { authenticate } from '../middleware/auth.js';
 
 const router = express.Router();
 
-// Middleware to verify user
-const verifyUser = async(req, res, next) => {
-    const userId = req.headers['user-id'];
-    if (!userId) return res.status(401).json({ error: 'User ID required' });
-    req.userId = userId;
-    next();
-};
+router.use(authenticate);
 
-router.use(verifyUser);
+const getChatRole = (role) => {
+    if (role === 'restaurant_owner') return 'restaurant';
+    if (role === 'delivery_partner') return 'driver';
+    return role || 'customer';
+};
 
 // Get or create chat conversation for an order
 router.post('/conversation/:orderId', async(req, res) => {
@@ -27,7 +26,7 @@ router.post('/conversation/:orderId', async(req, res) => {
             conversation = new ChatConversation({
                 orderId,
                 restaurantId,
-                customerId: req.userId,
+                customerId: req.user._id,
                 createdAt: new Date(),
                 updatedAt: new Date()
             });
@@ -57,10 +56,10 @@ router.get('/conversation/:conversationId/messages', async(req, res) => {
             .exec();
 
         // Mark messages as read for current user
-        const userRole = req.headers['user-role'] || 'customer';
+        const userRole = getChatRole(req.user?.role);
         await ChatMessage.updateMany({
             conversationId: req.params.conversationId,
-            senderId: { $ne: req.userId },
+            senderId: { $ne: req.user._id },
             isRead: false
         }, { isRead: true });
 
@@ -82,7 +81,7 @@ router.get('/conversation/:conversationId/messages', async(req, res) => {
 router.post('/message', async(req, res) => {
     try {
         const { conversationId, message, attachments } = req.body;
-        const userRole = req.headers['user-role'] || 'customer';
+        const userRole = getChatRole(req.user?.role);
 
         // Verify conversation exists and user has access
         const conversation = await ChatConversation.findById(conversationId);
@@ -90,7 +89,7 @@ router.post('/message', async(req, res) => {
 
         const chatMessage = new ChatMessage({
             conversationId,
-            senderId: req.userId,
+            senderId: req.user._id,
             senderRole: userRole,
             message,
             attachments: attachments || [],
@@ -134,15 +133,15 @@ router.post('/message', async(req, res) => {
 // Get unread count for a user
 router.get('/unread-count', async(req, res) => {
     try {
-        const userRole = req.headers['user-role'] || 'customer';
+        const userRole = getChatRole(req.user?.role);
         let query = {};
 
         if (userRole === 'customer') {
-            query.customerId = req.userId;
+            query.customerId = req.user._id;
         } else if (userRole === 'restaurant') {
-            query.restaurantId = req.userId;
+            query.restaurantId = req.user._id;
         } else if (userRole === 'driver') {
-            query.driverId = req.userId;
+            query.driverId = req.user._id;
         }
 
         const conversations = await ChatConversation.find(query);
@@ -162,13 +161,13 @@ router.get('/unread-count', async(req, res) => {
 // Get all conversations for a user
 router.get('/conversations', async(req, res) => {
     try {
-        const userRole = req.headers['user-role'] || 'customer';
+        const userRole = getChatRole(req.user?.role);
         let query = {};
 
         if (userRole === 'customer') {
-            query.customerId = req.userId;
+            query.customerId = req.user._id;
         } else if (userRole === 'restaurant') {
-            query.restaurantId = req.userId;
+            query.restaurantId = req.user._id;
         }
 
         const conversations = await ChatConversation.find(query)

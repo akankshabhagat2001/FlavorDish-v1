@@ -1,3 +1,5 @@
+import { API_BASE_URL } from './runtimeConfig';
+
 interface ReviewRatings {
   foodQuality: number;
   deliverySpeed: number;
@@ -21,7 +23,6 @@ export interface Review {
 }
 
 const REVIEWS_KEY = 'flavorfinder_reviews';
-const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:5000';
 
 class ReviewService {
   private reviews: Review[] = [];
@@ -42,7 +43,7 @@ class ReviewService {
   async addReview(review: Omit<Review, 'id' | 'timestamp'>, userId: string): Promise<Review> {
     try {
       // Try API first
-      const response = await fetch(`${API_URL}/api/reviews`, {
+      const response = await fetch(`${API_BASE_URL}/api/reviews`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',

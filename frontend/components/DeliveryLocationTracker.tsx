@@ -1,5 +1,6 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { io, Socket } from 'socket.io-client';
+import { SOCKET_URL } from '../services/runtimeConfig';
 
 export default function DeliveryLocationTracker() {
   const [currentLocation, setCurrentLocation] = useState<{ lat: number; lng: number } | null>(null);
@@ -11,8 +12,7 @@ export default function DeliveryLocationTracker() {
 
   // Initialize Socket.io
   useEffect(() => {
-    const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:5000';
-    socketRef.current = io(API_URL, {
+    socketRef.current = io(SOCKET_URL, {
       reconnection: true,
       reconnectionDelay: 1000,
       reconnectionDelayMax: 5000,

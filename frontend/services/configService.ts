@@ -1,4 +1,5 @@
 // Environment configuration service
+import { API_BASE_URL } from './runtimeConfig';
 
 interface Config {
   apiUrl: string;
@@ -18,7 +19,7 @@ const getEnvVariable = (key: string, defaultValue?: string): string => {
 };
 
 export const config: Config = {
-  apiUrl: getEnvVariable('API_URL', 'http://localhost:5000'),
+  apiUrl: getEnvVariable('API_URL', API_BASE_URL),
   isProduction: getEnvVariable('MODE') === 'production',
   isDevelopment: getEnvVariable('MODE') === 'development',
   isTest: getEnvVariable('MODE') === 'test',

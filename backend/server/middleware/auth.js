@@ -1,7 +1,10 @@
 import jwt from 'jsonwebtoken';
 import User from '../models/User.js';
+const jwtSecret = process.env.JWT_SECRET;
 
-const jwtSecret = process.env.JWT_SECRET || 'your-secret-key';
+if (!jwtSecret) {
+    throw new Error('JWT_SECRET is required. Set it in environment variables before starting the server.');
+}
 
 export const authenticate = async(req, res, next) => {
     try {

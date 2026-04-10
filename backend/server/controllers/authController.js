@@ -6,8 +6,14 @@ import { sendEmailOTP } from '../services/emailService.js';
 import { sendSmsOTP, logOtpConsole } from '../services/smsService.js';
 import { logActivity } from '../routes/activity.js';
 
+const jwtSecret = process.env.JWT_SECRET;
+
+if (!jwtSecret) {
+    throw new Error('JWT_SECRET is required. Set it in environment variables before starting the server.');
+}
+
 const generateToken = (userId) => {
-    return jwt.sign({ userId }, process.env.JWT_SECRET || 'your-secret-key', {
+    return jwt.sign({ userId }, jwtSecret, {
         expiresIn: '7d'
     });
 };
@@ -123,11 +129,12 @@ export const register = async (req, res) => {
         }
 
         const { name, email, password, role = 'customer', phone, address } = req.body;
+        const normalizedRole = role === 'restaurant' ? 'restaurant_owner' : role === 'delivery' ? 'delivery_partner' : role;
 
-        // Validate role
-        const validRoles = ['customer', 'restaurant_owner', 'delivery_partner', 'admin'];
-        if (!validRoles.includes(role)) {
-            return res.status(400).json({ message: 'Invalid role selected. Please choose customer, restaurant_owner, delivery_partner, or admin.' });
+        // Public registration cannot create admin users.
+        const validRoles = ['customer', 'restaurant_owner', 'delivery_partner'];
+        if (!validRoles.includes(normalizedRole)) {
+            return res.status(400).json({ message: 'Invalid role selected. Please choose customer, restaurant_owner, or delivery_partner.' });
         }
 
         // Check if user already exists
@@ -141,7 +148,7 @@ export const register = async (req, res) => {
             name,
             email: email.toLowerCase(),
             password,
-            role,
+            role: normalizedRole,
             phone,
             isActive: true
         };
@@ -163,7 +170,7 @@ export const register = async (req, res) => {
 
         // Create restaurant for restaurant owners
         let restaurant = null;
-        if (role === 'restaurant_owner') {
+        if (normalizedRole === 'restaurant_owner') {
             try {
                 restaurant = new Restaurant({
                     name: `${name}'s Restaurant`, // Default name, can be updated later
@@ -192,7 +199,7 @@ export const register = async (req, res) => {
         const token = generateToken(user._id);
 
         res.status(201).json({
-            message: role === 'restaurant_owner' && restaurant ?
+            message: normalizedRole === 'restaurant_owner' && restaurant ?
                 'Registration successful! Your restaurant has been created. You can now login and complete your restaurant profile.' : 'Registration successful! You can now login.',
             token,
             user: {

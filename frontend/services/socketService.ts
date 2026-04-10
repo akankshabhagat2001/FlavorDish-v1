@@ -1,6 +1,7 @@
 import { io } from 'socket.io-client';
+import { SOCKET_URL } from './runtimeConfig';
 
-const socket = io('http://localhost:5000');
+const socket = io(SOCKET_URL);
 
 export const socketService = {
   connect: () => {

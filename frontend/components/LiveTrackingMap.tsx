@@ -2,6 +2,7 @@ import React, { useEffect, useRef, useState } from 'react';
 import mapboxgl from 'mapbox-gl';
 import 'mapbox-gl/dist/mapbox-gl.css';
 import { io, Socket } from 'socket.io-client';
+import { SOCKET_URL } from '../services/runtimeConfig';
 
 // Get your Mapbox token from https://account.mapbox.com/tokens/
 mapboxgl.accessToken = import.meta.env.VITE_MAPBOX_TOKEN || 'YOUR_MAPBOX_TOKEN_HERE';
@@ -61,8 +62,7 @@ export default function LiveTrackingMap({ orderId }: { orderId: string }) {
 
   // Connect to Socket.io for real-time tracking
   useEffect(() => {
-    const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:5000';
-    socketRef.current = io(API_URL, {
+    socketRef.current = io(SOCKET_URL, {
       reconnection: true,
       reconnectionDelay: 1000,
       reconnectionDelayMax: 5000,

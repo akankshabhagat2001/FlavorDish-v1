@@ -1,18 +1,5 @@
 import io, { Socket } from 'socket.io-client';
-
-const normalizeApiUrl = (url: string) => {
-  let normalized = url.trim();
-  if (normalized.endsWith('/')) {
-    normalized = normalized.slice(0, -1);
-  }
-  if (normalized.endsWith('/api')) {
-    normalized = normalized.slice(0, -4);
-  }
-  return normalized;
-};
-
-const rawSocketUrl = (import.meta.env as any).VITE_API_URL || 'http://localhost:5000';
-const SOCKET_URL = normalizeApiUrl(rawSocketUrl);
+import { SOCKET_URL } from './runtimeConfig';
 
 interface ChatMessage {
   id: string;

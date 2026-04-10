@@ -24,11 +24,37 @@ import Order from './models/Order.js';
 
 dotenv.config();
 
+const requireEnv = (key) => {
+    const value = process.env[key];
+    if (!value || !value.trim()) {
+        throw new Error(`Missing required environment variable: ${key}`);
+    }
+    return value.trim();
+};
+
+const NODE_ENV = process.env.NODE_ENV || 'development';
+const isProduction = NODE_ENV === 'production';
+const JWT_SECRET = requireEnv('JWT_SECRET');
+const MONGODB_URI = requireEnv('MONGODB_URI');
+const FRONTEND_URL = process.env.FRONTEND_URL;
+
+if (isProduction && !FRONTEND_URL) {
+    throw new Error('FRONTEND_URL is required in production for secure CORS configuration.');
+}
+
 const app = express();
 const server = createServer(app);
-const corsOrigin = process.env.FRONTEND_URL || '*';
+const allowedOrigins = isProduction ?
+    [FRONTEND_URL] :
+    ['http://localhost:3000', 'http://localhost:3001', 'http://127.0.0.1:3000', 'http://127.0.0.1:3001', ...(FRONTEND_URL ? [FRONTEND_URL] : [])];
 const corsOptions = {
-    origin: corsOrigin,
+    origin: (origin, callback) => {
+        if (!origin || allowedOrigins.includes(origin)) {
+            callback(null, true);
+            return;
+        }
+        callback(new Error(`CORS blocked for origin: ${origin}`));
+    },
     methods: ["GET", "POST", "PUT", "DELETE", "OPTIONS"],
     credentials: true
 };
@@ -60,6 +86,32 @@ app.use('/api/activity', activityRoutes);
 // Test route
 app.get('/api/test', (req, res) => {
     res.json({ message: 'Server is running!', timestamp: new Date() });
+});
+
+app.get('/health', (req, res) => {
+    res.status(200).json({
+        status: 'ok',
+        service: 'flavorfinder-api',
+        uptime: process.uptime(),
+        timestamp: new Date().toISOString()
+    });
+});
+
+app.get('/ready', (req, res) => {
+    const dbReady = mongoose.connection.readyState === 1;
+    if (!dbReady) {
+        return res.status(503).json({
+            status: 'not_ready',
+            database: 'disconnected',
+            timestamp: new Date().toISOString()
+        });
+    }
+
+    return res.status(200).json({
+        status: 'ready',
+        database: 'connected',
+        timestamp: new Date().toISOString()
+    });
 });
 
 // Socket.io for real-time order tracking, delivery location, and chat
@@ -319,7 +371,6 @@ app.use((err, req, res, next) => {
 });
 
 // Connect to MongoDB and start the server
-const MONGODB_URI = process.env.MONGODB_URI || 'mongodb://localhost:27017/flavorfinder';
 const START_PORT = parseInt(process.env.PORT, 10) || 5000;
 let currentPort = START_PORT;
 let portAttempts = 0;
@@ -347,11 +398,12 @@ async function startServer() {
 
         console.log('✅ MongoDB connected successfully');
         console.log(`Database: ${MONGODB_URI.split('/').pop()}`);
+        console.log(`🔐 JWT secret loaded: ${Boolean(JWT_SECRET)}`);
 
         server.listen(currentPort, '0.0.0.0', () => {
             console.log(`🚀 Server running on http://localhost:${currentPort}`);
             console.log(`🔗 API: http://localhost:${currentPort}/api`);
-            console.log(`⚙️  Environment: ${process.env.NODE_ENV || 'development'}`);
+            console.log(`⚙️  Environment: ${NODE_ENV}`);
         });
     } catch (err) {
         console.error('❌ MongoDB connection failed:', err.message || err);

@@ -91,7 +91,7 @@ const TableBookingPage: React.FC<TableBookingPageProps> = ({
       
       // Show alert only if it's a critical error
       if (err?.code === 'ECONNREFUSED' || err?.message === 'Network Error') {
-        alert("Backend server is not running. Please ensure the server is started at http://localhost:5000");
+        alert("Backend server is not reachable. Please verify the API URL in your environment configuration.");
       }
     }
   };
