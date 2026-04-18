@@ -229,17 +229,12 @@ const Collections: React.FC<CollectionsProps> = ({ city, collections, restaurant
       });
 
   // As requested, hide the first 4 collection cards to keep UI focused on recommendation blocks
-  const visibleCollections = filteredCollections.slice(4);
+  const visibleCollections = filteredCollections;
 
   const handleCollectionClick = (collection: Collection) => {
     setSelectedCollection(collection);
-    if (collection._id === 'c4') {
-      // For Explore Ahmedabad Foods collection
-      onCollectionClick?.(collection, [], true);
-    } else {
-      const collectionRestaurants = getRestaurantsForCollection(collection._id);
-      onCollectionClick?.(collection, collectionRestaurants);
-    }
+    const collectionRestaurants = getRestaurantsForCollection(collection._id);
+    onCollectionClick?.(collection, collectionRestaurants);
   };
 
   if (loading && collections.length === 0) {

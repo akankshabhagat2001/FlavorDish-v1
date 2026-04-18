@@ -29,6 +29,9 @@ const CustomerDashboardComplete: React.FC<CustomerDashboardCompleteProps> = ({
   const [isAddingAddress, setIsAddingAddress] = useState(false);
   const [newAddressLabel, setNewAddressLabel] = useState('Home');
   const [newAddressDetails, setNewAddressDetails] = useState('');
+  
+  // New state for food items
+  const [foodItems, setFoodItems] = useState<MenuItem[]>([]);
 
   const handleSaveAddress = async () => {
     if (!newAddressDetails.trim()) return;
@@ -106,17 +109,25 @@ const CustomerDashboardComplete: React.FC<CustomerDashboardCompleteProps> = ({
   });
 
   useEffect(() => {
-    const loadRestaurants = async () => {
+    const loadRestaurantsAndFoods = async () => {
       try {
-        const response = await restaurantService.getRestaurants({ page: 1, limit: 200 });
-        const data = (response?.restaurants || []).map(normalizeRestaurant);
+        const [resResponse, foodResponse] = await Promise.all([
+          restaurantService.getRestaurants({ page: 1, limit: 20 }),
+          apiClient.get('/food') // Fetch foods directly or via foodService
+        ]);
+        
+        const data = (resResponse?.restaurants || []).map(normalizeRestaurant);
         setRestaurants(data);
         setFilteredRestaurants(data);
+
+        // Parse food items
+        const foodsData = foodResponse?.data?.foods || foodResponse?.data || [];
+        setFoodItems(foodsData);
       } catch (err) {
-        console.error('Error loading restaurants:', err);
+        console.error('Error loading data:', err);
       }
     };
-    loadRestaurants();
+    loadRestaurantsAndFoods();
   }, []);
 
   useEffect(() => {
@@ -343,7 +354,7 @@ const CustomerDashboardComplete: React.FC<CustomerDashboardCompleteProps> = ({
               <h3 className="font-black text-lg mb-6">Featured Restaurants</h3>
               <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
                 {filteredRestaurants.slice(0, 6).map(restaurant => (
-                  <div key={restaurant._id} className="border border-gray-200 rounded-xl overflow-hidden hover:shadow-xl transition-all hover:-translate-y-1">
+                  <div key={restaurant._id} className="border border-gray-200 rounded-xl overflow-hidden hover:shadow-xl transition-all hover:-translate-y-1 cursor-pointer" onClick={() => onViewChange?.(`restaurant-${restaurant._id}`)}>
                     <div className="relative">
                       <img 
                         src={restaurant.imageUrl || 'https://via.placeholder.com/300x200?text=Restaurant'} 
@@ -366,6 +377,54 @@ const CustomerDashboardComplete: React.FC<CustomerDashboardCompleteProps> = ({
                     </div>
                   </div>
                 ))}
+                {filteredRestaurants.length === 0 && (
+                  <div className="col-span-full text-center py-8 text-gray-500 font-bold">No restaurants found.</div>
+                )}
+              </div>
+            </div>
+
+            {/* Discover Food Items */}
+            <div className="bg-white rounded-2xl p-6 border border-gray-200">
+              <div className="flex items-center justify-between mb-6">
+                <h3 className="font-black text-lg">Discover Popular Dishes</h3>
+              </div>
+              <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-4">
+                {foodItems.slice(0, 12).map((food: any) => (
+                  <div key={food._id} className="border border-gray-100 rounded-xl overflow-hidden hover:shadow-lg transition-all group cursor-pointer" onClick={() => onViewChange?.(`restaurant-${food.restaurant?._id || food.restaurant}`)}>
+                    <div className="relative h-32 overflow-hidden bg-gray-50">
+                      <img 
+                        src={food.image || food.imageUrl || food.images?.[0]?.url || 'https://via.placeholder.com/200x200?text=Food'} 
+                        alt={food.name}
+                        className="w-full h-full object-cover group-hover:scale-110 transition-transform duration-300"
+                      />
+                      <div className="absolute top-2 left-2 bg-white/90 backdrop-blur-sm px-2 py-0.5 rounded text-[10px] font-black uppercase text-gray-700 shadow-sm border border-gray-200">
+                        {food.category || 'Dish'}
+                      </div>
+                       {food.isVeg !== undefined && (
+                        <div className="absolute top-2 right-2 bg-white rounded flex items-center justify-center p-0.5 shadow-sm border border-gray-200">
+                          <div className={`w-3 h-3 border-2 ${food.isVeg ? 'border-green-600' : 'border-red-600'} rounded-sm flex items-center justify-center`}>
+                            <div className={`w-1.5 h-1.5 rounded-full ${food.isVeg ? 'bg-green-600' : 'bg-red-600'}`}></div>
+                          </div>
+                        </div>
+                      )}
+                    </div>
+                    <div className="p-3">
+                      <h4 className="font-black text-gray-900 text-sm mb-1 truncate">{food.name || food.itemName}</h4>
+                      <p className="text-gray-500 text-xs line-clamp-1 mb-2">{food.description || 'Delicious food item'}</p>
+                      <div className="flex items-center justify-between">
+                        <span className="font-black text-[#EF4F5F] text-sm">₹{food.discountedPrice || food.price || 0}</span>
+                        <button className="bg-gray-100 hover:bg-[#EF4F5F] hover:text-white transition-colors text-gray-700 text-xs font-black px-3 py-1.5 rounded-lg border border-gray-200 hover:border-[#EF4F5F]">
+                          Add +
+                        </button>
+                      </div>
+                    </div>
+                  </div>
+                ))}
+                {foodItems.length === 0 && (
+                  <div className="col-span-full text-center py-12 border border-dashed border-gray-200 rounded-xl bg-gray-50">
+                    <p className="text-gray-400 font-bold mb-2">No dishes available at the moment</p>
+                  </div>
+                )}
               </div>
             </div>
 

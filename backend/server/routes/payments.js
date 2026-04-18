@@ -1,10 +1,127 @@
 import express from 'express';
+import crypto from 'crypto';
 import Order from '../models/Order.js';
 import User from '../models/User.js';
 import Restaurant from '../models/Restaurant.js';
-import { authenticate, authorize } from '../middleware/auth.js';
+import Payment from '../models/Payment.js';
+import { authMiddleware as authenticate } from '../middleware/authMiddleware.js';
+import { authorizeRoles as authorize } from '../middleware/roleMiddleware.js';;
 
 const router = express.Router();
+
+let razorpayInstance = null;
+const getRazorpay = async () => {
+    if (razorpayInstance) return razorpayInstance;
+    try {
+        const Razorpay = (await import('razorpay')).default;
+        razorpayInstance = new Razorpay({
+            key_id:     process.env.RAZORPAY_KEY_ID || 'rzp_test_1234',
+            key_secret: process.env.RAZORPAY_KEY_SECRET || 'secret'
+        });
+        return razorpayInstance;
+    } catch {
+        return null;
+    }
+};
+
+// Razorpay: Create Order
+router.post('/razorpay/create-order', authenticate, authorize('customer'), async (req, res) => {
+    try {
+        const { orderId } = req.body;
+        if (!orderId) return res.status(400).json({ message: 'orderId is required.' });
+
+        const order = await Order.findById(orderId);
+        if (!order) return res.status(404).json({ message: 'Order not found.' });
+        if (order.customer.toString() !== req.user._id.toString()) {
+            return res.status(403).json({ message: 'You are not allowed to pay for this order.' });
+        }
+
+        const rzp = await getRazorpay();
+        if (!rzp) return res.status(500).json({ message: 'Payment gateway not ready.' });
+
+        const rzpOrder = await rzp.orders.create({
+            amount:   Math.round(order.total * 100), // paise
+            currency: 'INR',
+            receipt:  order.orderNumber,
+            notes:    { orderId: order._id.toString() },
+        });
+
+        order.paymentGateway = 'razorpay';
+        order.paymentTransactionId = rzpOrder.id;
+        await order.save();
+        await Payment.findOneAndUpdate({ orderId: order._id, userId: req.user._id }, {
+            orderId: order._id,
+            userId: req.user._id,
+            amount: order.total,
+            paymentType: 'prepaid',
+            paymentMethod: 'upi',
+            paymentGateway: 'razorpay',
+            status: 'pending',
+            razorpayOrderId: rzpOrder.id
+        }, { upsert: true, new: true, setDefaultsOnInsert: true });
+
+        return res.json({
+            rzpOrderId: rzpOrder.id,
+            amount: rzpOrder.amount,
+            currency: rzpOrder.currency,
+            keyId: process.env.RAZORPAY_KEY_ID,
+            orderNumber: order.orderNumber,
+        });
+    } catch (err) {
+        return res.status(500).json({ message: 'Failed to create Razorpay order.', detail: err.message });
+    }
+});
+
+// Razorpay: Verify Payment
+router.post('/razorpay/verify', authenticate, authorize('customer'), async (req, res) => {
+    try {
+        const { razorpay_order_id, razorpay_payment_id, razorpay_signature } = req.body;
+        if (!process.env.RAZORPAY_KEY_SECRET) {
+            return res.status(500).json({ message: 'RAZORPAY_KEY_SECRET is not configured.' });
+        }
+        const expectedSig = crypto
+            .createHmac('sha256', process.env.RAZORPAY_KEY_SECRET)
+            .update(`${razorpay_order_id}|${razorpay_payment_id}`)
+            .digest('hex');
+
+        if (expectedSig !== razorpay_signature) {
+            return res.status(400).json({ message: 'Payment signature verification failed.' });
+        }
+
+        const order = await Order.findOneAndUpdate(
+            { paymentTransactionId: razorpay_order_id, customer: req.user._id },
+            {
+                paymentStatus: 'paid',
+                status: 'confirmed',
+                $push: {
+                    statusHistory: { status: 'confirmed', note: `Razorpay verified. Payment ID: ${razorpay_payment_id}`, timestamp: new Date() }
+                }
+            },
+            { new: true }
+        );
+        if (!order) {
+            return res.status(404).json({ message: 'Order not found for this payment.' });
+        }
+        await Payment.findOneAndUpdate({ orderId: order._id, userId: req.user._id }, {
+            orderId: order._id,
+            userId: req.user._id,
+            amount: order.total,
+            paymentType: 'prepaid',
+            paymentMethod: 'upi',
+            paymentGateway: 'razorpay',
+            status: 'completed',
+            razorpayOrderId: razorpay_order_id,
+            razorpayPaymentId: razorpay_payment_id,
+            razorpaySignature: razorpay_signature,
+            transactionId: razorpay_payment_id,
+            completedAt: new Date()
+        }, { upsert: true, new: true });
+
+        return res.json({ verified: true, message: 'Payment verified successfully.', orderId: order._id });
+    } catch (err) {
+        return res.status(500).json({ message: 'Payment verification error.' });
+    }
+});
 
 // Process an online payment for an order
 router.post('/process', authenticate, authorize('customer'), async(req, res) => {

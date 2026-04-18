@@ -195,21 +195,19 @@ const Header: React.FC<HeaderProps> = ({
     if (role === 'admin') return 'admin';
     if (role === 'restaurant') return 'partner';
     if (role === 'delivery') return 'delivery';
-    return 'history';
+    return 'customer-dashboard';
   };
 
   return (
     <nav className="bg-[#1C1C1C] sticky top-0 z-[1100] shadow-2xl border-b border-white/5">
       <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-3 flex items-center justify-between gap-4">
         <div 
-          className="flex items-center gap-2 cursor-pointer group"
+          className="flex items-center gap-2 cursor-pointer border-none"
           onClick={onLogoClick}
         >
-          <div className="w-10 h-10 bg-[#EF4F5F] rounded-xl flex items-center justify-center shadow-lg shadow-[#EF4F5F]/40 group-hover:scale-110 transition-transform">
-            <i className="fa-solid fa-magnifying-glass-location text-white text-xl"></i>
-          </div>
-          <div className="flex flex-col">
-            <span className="text-2xl font-black text-white tracking-tighter hidden sm:block italic leading-none">flavorfinder</span>
+          <img src="/images/logo.png" alt="Flavorfinder Logo" className="h-[40px] w-auto object-contain transition-transform hover:scale-105" onError={(e) => { e.currentTarget.style.display = 'none'; e.currentTarget.nextElementSibling?.classList.remove('hidden'); }} />
+          <div className="hidden flex-col items-center">
+            <span className="text-2xl font-black text-white tracking-tighter italic leading-none">flavorfinder</span>
           </div>
         </div>
         
@@ -268,11 +266,9 @@ const Header: React.FC<HeaderProps> = ({
             <div className="hidden sm:flex items-center gap-6 text-gray-400 font-bold uppercase tracking-widest text-[10px]">
               <button onClick={() => onViewChange('home')} className="hover:text-white transition-colors">Marketplace</button>
               <button onClick={() => onViewChange('explore_ahmedabad')} className="hover:text-white transition-colors">Explore</button>
-              {currentUser.role === 'customer' ? (
-                <button onClick={() => onViewChange('history')} className="hover:text-white transition-colors">Orders</button>
-              ) : (
-                <button onClick={() => onViewChange(getDashboardView(currentUser.role))} className="text-[#EF4F5F] font-black underline hover:text-[#ff6b7b]">Console</button>
-              )}
+              <button onClick={() => onViewChange(getDashboardView(currentUser.role))} className="text-[#EF4F5F] font-black underline hover:text-[#ff6b7b]">
+                {currentUser.role === 'customer' ? 'Orders' : 'Console'}
+              </button>
             </div>
           )}
           {currentUser ? (

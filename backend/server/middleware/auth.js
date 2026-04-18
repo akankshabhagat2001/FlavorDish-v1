@@ -1,5 +1,6 @@
 import jwt from 'jsonwebtoken';
 import User from '../models/User.js';
+
 const jwtSecret = process.env.JWT_SECRET;
 
 if (!jwtSecret) {
@@ -15,7 +16,8 @@ export const authenticate = async(req, res, next) => {
         }
 
         const decoded = jwt.verify(token, jwtSecret);
-        const user = await User.findById(decoded.userId);
+        // Support both { id } (authController) and legacy { userId }
+        const user = await User.findById(decoded.id || decoded.userId);
 
         if (!user) {
             return res.status(401).json({ message: 'Invalid user token.' });
@@ -57,7 +59,7 @@ export const optionalAuth = async(req, res, next) => {
 
         if (token) {
             const decoded = jwt.verify(token, jwtSecret);
-            const user = await User.findById(decoded.userId);
+            const user = await User.findById(decoded.id || decoded.userId);
             if (user) {
                 req.user = user;
             }
@@ -65,7 +67,15 @@ export const optionalAuth = async(req, res, next) => {
 
         next();
     } catch (error) {
-        // If token is invalid or expires, just continue without auth
+        // If token is invalid or expired, just continue without auth
         next();
     }
+};
+
+// Middleware to protect admin-only routes
+export const requireAdmin = (req, res, next) => {
+    if (!req.user || req.user.role !== 'admin') {
+        return res.status(403).json({ message: 'Access denied: Admins only' });
+    }
+    next();
 };

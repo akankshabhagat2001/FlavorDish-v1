@@ -2,7 +2,7 @@ import express from 'express';
 import { body, validationResult } from 'express-validator';
 import TableBooking from '../models/TableBooking.js';
 import Restaurant from '../models/Restaurant.js';
-import { authenticate } from '../middleware/auth.js';
+import { authMiddleware as authenticate } from '../middleware/authMiddleware.js';;
 import { io } from '../server.js';
 
 const router = express.Router();

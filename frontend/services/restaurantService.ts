@@ -28,21 +28,28 @@ export const restaurantService = {
       city: string;
       state: string;
       zipCode: string;
-      coordinates: [number, number];
+      coordinates: [number, number] | { latitude: number; longitude: number };
     };
     phone: string;
     email: string;
     image?: string;
-    openingHours: {
+    openingHours?: {
       [key: string]: {
         open: string;
         close: string;
         isOpen: boolean;
       };
     };
-    deliveryRadius: number;
+    deliveryRadius?: number;
     deliveryFee: number;
     minimumOrder: number;
+    costForTwo?: number;
+    deliveryTime?: string;
+    contactPhone?: string;
+    tablePrice?: number;
+    chairPrice?: number;
+    signatureDish?: { name: string; imageUrl: string };
+    images?: { url: string; alt?: string }[];
     isActive: boolean;
   }) => {
     const response = await api.post('/restaurants', restaurantData);
@@ -61,6 +68,12 @@ export const restaurantService = {
     deliveryRadius: number;
     deliveryFee: number;
     minimumOrder: number;
+    costForTwo: number;
+    deliveryTime: string;
+    contactPhone: string;
+    tablePrice: number;
+    chairPrice: number;
+    signatureDish: { name: string; imageUrl: string };
     isActive: boolean;
   }>) => {
     const response = await api.put(`/restaurants/${id}`, restaurantData);

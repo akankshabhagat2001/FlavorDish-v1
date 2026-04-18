@@ -6,6 +6,8 @@ export { suggestionService } from './suggestionService';
 export { userService } from './userService';
 export { adminService } from './adminService';
 export { paymentService } from './paymentService';
+export { cartService } from './cartService';
 export { chatService } from './chatService';
 export { reviewService } from './reviewService';
 export { notificationService } from './notificationService';
+export { imageUploadService } from './imageUploadService';

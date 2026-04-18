@@ -304,6 +304,10 @@ const PartnerDashboard: React.FC<PartnerDashboardProps> = ({ currentUser, onLogo
     }
   };
 
+  const handleUpdateBookingStatus = async (bookingId: string, bookingStatus: 'confirmed' | 'cancelled') => {
+    setBookings((prev) => prev.map((booking) => booking._id === bookingId ? { ...booking, bookingStatus } : booking));
+  };
+
     // await bookingService.updateStatus if it exists, skipping local db.updateBookingStatus
     // loadData();
 

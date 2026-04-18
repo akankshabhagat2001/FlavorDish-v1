@@ -55,12 +55,12 @@ export const orderService = {
   },
 
   updateOrderStatus: async (id: string, status: string, notes?: string) => {
-    const response = await api.put(`/orders/${id}/status`, { status, notes });
+    const response = await api.put(`/orders/${id}/status`, { status, note: notes });
     return response.data;
   },
 
   cancelOrder: async (id: string, reason: string) => {
-    const response = await api.put(`/orders/${id}/cancel`, { reason });
+    const response = await api.put(`/orders/${id}/status`, { status: 'cancelled', note: reason });
     return response.data;
   },
 
@@ -89,7 +89,19 @@ export const orderService = {
   },
 
   updateDeliveryStatus: async (orderId: string, status: string, location?: [number, number]) => {
-    const response = await api.put(`/orders/${orderId}/delivery-status`, { status, location });
+    if (status === 'out_for_delivery') {
+      const response = await api.put(`/orders/${orderId}/out-for-delivery`);
+      return response.data;
+    }
+    if (status === 'delivered') {
+      const response = await api.put(`/orders/${orderId}/deliver`);
+      return response.data;
+    }
+    if (location?.length === 2) {
+      const response = await api.put(`/orders/${orderId}/location`, { latitude: location[0], longitude: location[1] });
+      return response.data;
+    }
+    const response = await api.put(`/orders/${orderId}/status`, { status });
     return response.data;
   },
 
@@ -109,7 +121,7 @@ export const orderService = {
     page?: number;
     limit?: number;
   }) => {
-    const response = await api.get('/orders/history', { params });
+    const response = await api.get('/orders/my-orders', { params });
     return response.data;
   }
 };

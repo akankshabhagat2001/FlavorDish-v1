@@ -111,9 +111,7 @@ export const RegisterPage: React.FC<RegisterPageProps> = ({ onSuccess, onLoginCl
 
       // Check if registration was successful with immediate token
       if (response.token && response.user) {
-        // Store token and user data
-        localStorage.setItem('token', response.token);
-        localStorage.setItem('user', JSON.stringify(response.user));
+        // authService now handles token/user storage
         
         // Show success message
         const successMessage = response.restaurant 
@@ -223,16 +221,18 @@ export const RegisterPage: React.FC<RegisterPageProps> = ({ onSuccess, onLoginCl
   };
 
   return (
-    <div className="min-h-screen bg-gradient-to-br from-slate-900 via-slate-800 to-slate-900 flex items-center justify-center p-4">
+    <div className="min-h-screen bg-[#1B1240] flex items-center justify-center p-4 relative">
+      <div className="absolute inset-0 bg-[radial-gradient(circle_at_top,_rgba(139,92,246,0.25),_transparent_55%)]"></div>
       <div className="w-full max-w-md">
         {/* Header */}
-        <div className="text-center mb-8">
-          <h1 className="text-4xl font-bold text-white mb-2">FlavourFinder</h1>
-          <p className="text-gray-400">Create your account</p>
+        <div className="text-center mb-8 flex flex-col items-center">
+          <img src="/images/logo.png" alt="Logo" className="h-16 mb-4 object-contain" onError={(e) => { e.currentTarget.style.display = 'none'; e.currentTarget.nextElementSibling?.classList.remove('hidden'); }} />
+          <h1 className="text-5xl font-black tracking-tight text-white mb-1 hidden">FlavorFinder</h1>
+          <p className="text-slate-300 text-sm mt-2">Create your account</p>
         </div>
 
         {/* Card */}
-        <div className="bg-slate-800 rounded-2xl shadow-2xl p-8 border border-slate-700">
+        <div className="bg-[#1D2B45]/80 rounded-2xl shadow-2xl p-6 border border-slate-700/70 backdrop-blur-md">
           {error && (
             <div className="mb-6 p-4 bg-red-900/20 border border-red-500/50 rounded-lg text-red-400 text-sm">
               {error}
@@ -251,7 +251,7 @@ export const RegisterPage: React.FC<RegisterPageProps> = ({ onSuccess, onLoginCl
             <form onSubmit={handleRegister} className="space-y-5">
             {/* Name */}
             <div>
-              <label className="block text-sm font-medium text-gray-300 mb-2">Full Name</label>
+              <label className="block text-xs font-semibold text-slate-200 mb-2">Full Name</label>
               <div className="relative">
                 <span className="absolute left-3 top-3 text-gray-500">👤</span>
                 <input
@@ -260,14 +260,14 @@ export const RegisterPage: React.FC<RegisterPageProps> = ({ onSuccess, onLoginCl
                   value={formData.name}
                   onChange={handleChange}
                   placeholder="John Doe"
-                  className="w-full bg-slate-700 border border-slate-600 rounded-lg pl-10 pr-4 py-2.5 text-white placeholder-gray-500 focus:outline-none focus:border-red-500 focus:ring-1 focus:ring-red-500"
+                  className="w-full bg-slate-700/60 border border-slate-600 rounded-lg pl-10 pr-4 py-2.5 text-white placeholder-slate-400 focus:outline-none focus:border-indigo-400"
                 />
               </div>
             </div>
 
             {/* Email */}
             <div>
-              <label className="block text-sm font-medium text-gray-300 mb-2">Email</label>
+              <label className="block text-xs font-semibold text-slate-200 mb-2">Email</label>
               <div className="relative">
                 <span className="absolute left-3 top-3 text-gray-500">✉️</span>
                 <input
@@ -276,14 +276,14 @@ export const RegisterPage: React.FC<RegisterPageProps> = ({ onSuccess, onLoginCl
                   value={formData.email}
                   onChange={handleChange}
                   placeholder="john@example.com"
-                  className="w-full bg-slate-700 border border-slate-600 rounded-lg pl-10 pr-4 py-2.5 text-white placeholder-gray-500 focus:outline-none focus:border-red-500 focus:ring-1 focus:ring-red-500"
+                  className="w-full bg-slate-700/60 border border-slate-600 rounded-lg pl-10 pr-4 py-2.5 text-white placeholder-slate-400 focus:outline-none focus:border-indigo-400"
                 />
               </div>
             </div>
 
             {/* Phone */}
             <div>
-              <label className="block text-sm font-medium text-gray-300 mb-2">Phone Number</label>
+              <label className="block text-xs font-semibold text-slate-200 mb-2">Phone Number</label>
               <div className="relative">
                 <span className="absolute left-3 top-3 text-gray-500">📱</span>
                 <input
@@ -292,14 +292,14 @@ export const RegisterPage: React.FC<RegisterPageProps> = ({ onSuccess, onLoginCl
                   value={formData.phone}
                   onChange={handleChange}
                   placeholder="+91 98765 43210"
-                  className="w-full bg-slate-700 border border-slate-600 rounded-lg pl-10 pr-4 py-2.5 text-white placeholder-gray-500 focus:outline-none focus:border-red-500 focus:ring-1 focus:ring-red-500"
+                  className="w-full bg-slate-700/60 border border-slate-600 rounded-lg pl-10 pr-4 py-2.5 text-white placeholder-slate-400 focus:outline-none focus:border-indigo-400"
                 />
               </div>
             </div>
 
             {/* Address */}
             <div>
-              <label className="block text-sm font-medium text-gray-300 mb-2">Address</label>
+              <label className="block text-xs font-semibold text-slate-200 mb-2">Address</label>
               <div className="relative">
                 <span className="absolute left-3 top-3 text-gray-500">📍</span>
                 <input
@@ -308,48 +308,17 @@ export const RegisterPage: React.FC<RegisterPageProps> = ({ onSuccess, onLoginCl
                   value={formData.address}
                   onChange={handleChange}
                   placeholder="123 Main St, Ahmedabad"
-                  className="w-full bg-slate-700 border border-slate-600 rounded-lg pl-10 pr-4 py-2.5 text-white placeholder-gray-500 focus:outline-none focus:border-red-500 focus:ring-1 focus:ring-red-500"
+                  className="w-full bg-slate-700/60 border border-slate-600 rounded-lg pl-10 pr-4 py-2.5 text-white placeholder-slate-400 focus:outline-none focus:border-indigo-400"
                 />
               </div>
             </div>
 
-            {/* Role Selection */}
-            <div>
-              <label className="block text-sm font-medium text-gray-300 mb-2">Register as</label>
-              <select
-                name="role"
-                value={formData.role}
-                onChange={handleChange}
-                className="w-full bg-slate-700 border border-slate-600 rounded-lg px-4 py-2.5 text-white focus:outline-none focus:border-red-500 focus:ring-1 focus:ring-red-500"
-              >
-                <option value="customer">Customer</option>
-                <option value="restaurant_owner">Restaurant Owner</option>
-                <option value="delivery_partner">Delivery Partner</option>
-                <option value="admin">Admin</option>
-              </select>
-            </div>
-
-            {/* Restaurant Name - Only show if role is restaurant_owner */}
-            {formData.role === 'restaurant_owner' && (
-              <div>
-                <label className="block text-sm font-medium text-gray-300 mb-2">Restaurant Name</label>
-                <div className="relative">
-                  <span className="absolute left-3 top-3 text-gray-500">🏪</span>
-                  <input
-                    type="text"
-                    name="restaurantName"
-                    value={formData.restaurantName}
-                    onChange={handleChange}
-                    placeholder="E.g., Spice Garden"
-                    className="w-full bg-slate-700 border border-slate-600 rounded-lg pl-10 pr-4 py-2.5 text-white placeholder-gray-500 focus:outline-none focus:border-red-500 focus:ring-1 focus:ring-red-500"
-                  />
-                </div>
-              </div>
-            )}
+            {/* Role Selection is disabled for public signups per RBAC policy */}
+            <input type="hidden" name="role" value="customer" />
 
             {/* Password */}
             <div>
-              <label className="block text-sm font-medium text-gray-300 mb-2">Password</label>
+              <label className="block text-xs font-semibold text-slate-200 mb-2">Password</label>
               <div className="relative">
                 <span className="absolute left-3 top-3 text-gray-500">🔒</span>
                 <input
@@ -358,7 +327,7 @@ export const RegisterPage: React.FC<RegisterPageProps> = ({ onSuccess, onLoginCl
                   value={formData.password}
                   onChange={handleChange}
                   placeholder="••••••••"
-                  className="w-full bg-slate-700 border border-slate-600 rounded-lg pl-10 pr-10 py-2.5 text-white placeholder-gray-500 focus:outline-none focus:border-red-500 focus:ring-1 focus:ring-red-500"
+                  className="w-full bg-slate-700/60 border border-slate-600 rounded-lg pl-10 pr-10 py-2.5 text-white placeholder-slate-400 focus:outline-none focus:border-indigo-400"
                 />
                 <button
                   type="button"
@@ -372,7 +341,7 @@ export const RegisterPage: React.FC<RegisterPageProps> = ({ onSuccess, onLoginCl
 
             {/* Confirm Password */}
             <div>
-              <label className="block text-sm font-medium text-gray-300 mb-2">Confirm Password</label>
+              <label className="block text-xs font-semibold text-slate-200 mb-2">Confirm Password</label>
               <div className="relative">
                 <span className="absolute left-3 top-3 text-gray-500">🔒</span>
                 <input
@@ -381,7 +350,7 @@ export const RegisterPage: React.FC<RegisterPageProps> = ({ onSuccess, onLoginCl
                   value={formData.confirmPassword}
                   onChange={handleChange}
                   placeholder="••••••••"
-                  className="w-full bg-slate-700 border border-slate-600 rounded-lg pl-10 pr-10 py-2.5 text-white placeholder-gray-500 focus:outline-none focus:border-red-500 focus:ring-1 focus:ring-red-500"
+                  className="w-full bg-slate-700/60 border border-slate-600 rounded-lg pl-10 pr-10 py-2.5 text-white placeholder-slate-400 focus:outline-none focus:border-indigo-400"
                 />
                 <button
                   type="button"
@@ -397,7 +366,7 @@ export const RegisterPage: React.FC<RegisterPageProps> = ({ onSuccess, onLoginCl
             <button
               type="submit"
               disabled={loading}
-              className="w-full bg-gradient-to-r from-red-600 to-red-700 hover:from-red-700 hover:to-red-800 text-white font-semibold py-3 rounded-lg transition-all duration-300 disabled:opacity-50 disabled:cursor-not-allowed mt-6 transform hover:scale-105 shadow-lg hover:shadow-xl"
+              className="w-full bg-gradient-to-r from-rose-600 to-pink-600 text-white font-semibold py-3 rounded-lg transition-all duration-300 disabled:opacity-50 disabled:cursor-not-allowed mt-4 shadow-lg"
             >
               <span className="inline-flex items-center justify-center">
                 {loading && <span className="inline-block w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin mr-2"></span>}
@@ -407,11 +376,11 @@ export const RegisterPage: React.FC<RegisterPageProps> = ({ onSuccess, onLoginCl
           </form>
 
           {/* Already have account */}
-          <div className="mt-6 text-center text-gray-400 text-sm">
+          <div className="mt-5 text-center text-slate-300 text-sm">
             Already have an account?{' '}
             <button
               onClick={onLoginClick}
-              className="text-red-500 hover:text-red-400 font-semibold transition-colors"
+              className="text-rose-300 hover:text-rose-200 font-semibold transition-colors"
             >
               Login here
             </button>

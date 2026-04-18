@@ -49,8 +49,8 @@ const orderSchema = new mongoose.Schema({
     items: [orderItemSchema],
     status: {
         type: String,
-        enum: ['placed', 'confirmed', 'preparing', 'ready', 'picked_up', 'delivered', 'cancelled'],
-        default: 'placed'
+        enum: ['pending', 'placed', 'confirmed', 'preparing', 'ready', 'picked_up', 'out_for_delivery', 'delivered', 'cancelled'],
+        default: 'pending'
     },
     paymentType: {
         type: String,
@@ -120,7 +120,7 @@ const orderSchema = new mongoose.Schema({
     statusHistory: [{
         status: {
             type: String,
-            enum: ['placed', 'confirmed', 'preparing', 'ready', 'picked_up', 'delivered', 'cancelled']
+            enum: ['pending', 'placed', 'confirmed', 'preparing', 'ready', 'picked_up', 'out_for_delivery', 'delivered', 'cancelled']
         },
         timestamp: {
             type: Date,

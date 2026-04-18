@@ -23,12 +23,20 @@ const StarRating = ({ rating, setRating, interactive = false }: { rating: number
 );
 
 export default function RestaurantDetail({ restaurant, onClose, currentUser }: RestaurantDetailProps) {
-  const [activeTab, setActiveTab] = useState('Order Online');
   const [menuItems, setMenuItems] = useState<MenuItem[]>([]);
   const [reviews, setReviews] = useState<Review[]>([]);
   const [menuSearch, setMenuSearch] = useState('');
   const [isFollowing, setIsFollowing] = useState(false);
   const [followLoading, setFollowLoading] = useState(false);
+
+  const availableTabs = [
+    ...(restaurant.delivery ? ['Order Online'] : []),
+    ...(restaurant.dine_in ? ['Book a Table'] : []),
+    'About',
+    'Reviews'
+  ];
+
+  const [activeTab, setActiveTab] = useState(availableTabs[0] || 'About');
   
   // Booking State
   const [bookingForm, setBookingForm] = useState({
@@ -43,8 +51,8 @@ export default function RestaurantDetail({ restaurant, onClose, currentUser }: R
   useEffect(() => {
     const fetchData = async () => {
       try {
-        // Get menu items for this restaurant
-        const foods = await foodService.getFoods({ restaurant: restaurant._id });
+        // Get menu items for this restaurant, including unavailable dishes so customers can see status
+        const foods = await foodService.getFoods({ restaurant: restaurant._id, showUnavailable: true });
         setMenuItems(foods);
 
         // For now, keep reviews empty or implement review service later
@@ -149,7 +157,7 @@ export default function RestaurantDetail({ restaurant, onClose, currentUser }: R
         </div>
 
         <div className="flex gap-10 border-b border-gray-100 mb-8 overflow-x-auto no-scrollbar">
-          {['Order Online', 'Book a Table', 'About', 'Reviews'].map((tab) => (
+          {availableTabs.map((tab) => (
             <button key={tab} onClick={() => setActiveTab(tab)} className={`pb-5 text-lg transition-all relative ${activeTab === tab ? 'text-[#EF4F5F] font-black' : 'text-gray-400 font-bold hover:text-gray-600'}`}>
               {tab}
               {activeTab === tab && <div className="absolute bottom-0 left-0 right-0 h-1.5 bg-[#EF4F5F] rounded-t-full"></div>}

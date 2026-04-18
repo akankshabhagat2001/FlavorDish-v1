@@ -1,6 +1,50 @@
 import Delivery from '../models/Delivery.js';
 import Order from '../models/Order.js';
 import User from '../models/User.js';
+import DeliveryService from '../services/deliveryService.js';
+import { io } from '../server.js';
+
+// Get all deliveries (for admin)
+export const getAllDeliveries = async (req, res) => {
+    try {
+        const deliveries = await Delivery.find()
+            .populate('orderId')
+            .populate('deliveryPartnerId', 'name email phone location')
+            .populate('restaurantId', 'name address location')
+            .sort({ createdAt: -1 });
+        
+        res.status(200).json({ success: true, data: deliveries });
+    } catch (error) {
+        res.status(500).json({ success: false, message: 'Error fetching deliveries', error: error.message });
+    }
+};
+
+// Admin smart assign delivery
+export const assignDelivery = async (req, res) => {
+    try {
+        const { orderId } = req.body;
+        if (!orderId) {
+            return res.status(400).json({ success: false, message: 'Order ID is required' });
+        }
+
+        const delivery = await DeliveryService.assignDelivery(orderId);
+        
+        // Populate partner info
+        await delivery.populate('deliveryPartnerId', 'name phone location');
+
+        // Socket broadcast
+        io.emit('delivery:assigned', {
+            orderId: delivery.orderId,
+            deliveryId: delivery._id,
+            partnerName: delivery.deliveryPartnerId?.name,
+            status: delivery.status
+        });
+
+        res.status(201).json({ success: true, message: 'Delivery assigned successfully', data: delivery });
+    } catch (error) {
+        res.status(400).json({ success: false, message: error.message });
+    }
+};
 
 // Accept delivery request
 export const acceptDelivery = async (req, res) => {

@@ -1,0 +1,464 @@
+import React, { useState, useMemo } from 'react';
+import { User, Restaurant, Order } from '../types';
+import { useNavigate } from 'react-router-dom';
+import { adminService, restaurantService, userService, authService } from '../services';
+
+const AdminDashboardComplete: React.FC = () => {
+  const navigate = useNavigate();
+  const currentUser = authService.getCurrentUser();
+
+  React.useEffect(() => {
+    // Protect route: must be logged in and admin
+    if (!currentUser || currentUser.role !== 'admin') {
+      navigate('/admin-login');
+    }
+  }, [currentUser, navigate]);
+
+  const handleLogout = () => {
+    authService.logout();
+    navigate('/admin-login');
+  };
+
+  const [activeTab, setActiveTab] = useState<'dashboard' | 'users' | 'restaurants' | 'orders' | 'analytics' | 'suggestions' | 'activity'>('dashboard');
+  const [users, setUsers] = useState<User[]>([]);
+  const [restaurants, setRestaurants] = useState<Restaurant[]>([]);
+  const [orders, setOrders] = useState<Order[]>([]);
+  const [suggestions, setSuggestions] = useState<any[]>([]);
+  const [activityLogs, setActivityLogs] = useState<any[]>([]);
+  const [loading, setLoading] = useState(true);
+
+  const normalizeOrder = (raw: any): Order => ({
+    _id: raw?._id || '',
+    userId: raw?.customer?._id || raw?.userId || '',
+    restaurantId: raw?.restaurant?._id || raw?.restaurantId || '',
+    restaurantName: raw?.restaurant?.name || raw?.restaurantName || '',
+    items: raw?.items || [],
+    totalAmount: raw?.total || raw?.totalAmount || 0,
+    orderStatus: raw?.status || raw?.orderStatus || 'placed',
+    status: raw?.status || raw?.orderStatus || 'placed',
+    createdAt: raw?.createdAt ? new Date(raw.createdAt).getTime() : Date.now(),
+    paymentStatus: raw?.paymentStatus,
+  });
+
+  const normalizeUser = (raw: any): User => ({
+    _id: raw?._id || raw?.id || '',
+    name: raw?.name || 'User',
+    email: raw?.email || '',
+    role: raw?.role === 'restaurant_owner' ? 'restaurant' : raw?.role === 'delivery_partner' ? 'delivery' : (raw?.role || 'customer'),
+    createdAt: raw?.createdAt ? new Date(raw.createdAt).getTime() : Date.now(),
+    phone: raw?.phone,
+  });
+
+  const normalizeRestaurant = (raw: any): Restaurant => ({
+    _id: raw?._id || '',
+    ownerId: raw?.ownerId || raw?.owner?._id || raw?.owner || '',
+    name: raw?.name || 'Restaurant',
+    description: raw?.description || '',
+    cuisine: Array.isArray(raw?.cuisine) ? raw.cuisine : [],
+    location: {
+      address: raw?.address?.street ? `${raw.address.street}, ${raw.address.city || ''}` : (raw?.location?.address || ''),
+      latitude: raw?.address?.coordinates?.latitude || raw?.location?.latitude || 23.0225,
+      longitude: raw?.address?.coordinates?.longitude || raw?.location?.longitude || 72.5714,
+    },
+    rating: raw?.rating || 0,
+    isOpen: raw?.isOpen ?? true,
+    imageUrl: raw?.imageUrl || raw?.image || raw?.images?.[0]?.url || '',
+    deliveryTime: raw?.deliveryTime || '30 min',
+    costForTwo: raw?.costForTwo || 0,
+    createdAt: raw?.createdAt ? new Date(raw.createdAt).getTime() : Date.now(),
+  });
+
+  React.useEffect(() => {
+    const loadData = async () => {
+      setLoading(true);
+      try {
+        const [usersData, restaurantsData, ordersData, suggestionsData, activityData] = await Promise.all([
+          userService.getUsers({ page: 1, limit: 200 }),
+          restaurantService.getRestaurants({ page: 1, limit: 200 }),
+          adminService.getOrders({ page: 1, limit: 200 }),
+          adminService.getSuggestions('pending'),
+          adminService.getActivityLogs({ page: 1, limit: 50 })
+        ]);
+        setUsers((usersData?.users || []).map(normalizeUser).map(u => ({ ...u, isActive: usersData.users.find((ru: any)=>ru._id === u._id)?.isActive ?? true })));
+        setRestaurants((restaurantsData?.restaurants || []).map(normalizeRestaurant));
+        setOrders((ordersData?.orders || []).map(normalizeOrder));
+        setSuggestions(suggestionsData?.suggestions || []);
+        setActivityLogs(activityData?.logs || []);
+      } catch (err) {
+        console.error('Error loading data:', err);
+      } finally {
+        setLoading(false);
+      }
+    };
+    
+    loadData();
+  }, []);
+
+  const stats = useMemo(() => ({
+    totalUsers: users.length,
+    totalRestaurants: restaurants.length,
+    totalOrders: orders.length,
+    totalRevenue: orders.reduce((sum, o) => sum + (o.totalAmount || 0), 0),
+    avgOrderValue: orders.length > 0 ? Math.round(orders.reduce((sum, o) => sum + (o.totalAmount || 0), 0) / orders.length) : 0,
+    activeRestaurants: restaurants.filter(r => r.isOpen).length,
+  }), [users, restaurants, orders]);
+
+  const handleRoleChange = async (userId: string, targetRole: string) => {
+    try {
+      await adminService.updateUserRole(userId, targetRole);
+      setUsers(prev => prev.map(u => u._id === userId ? { ...u, role: targetRole as any } : u));
+    } catch (e) {
+      alert("Failed to update user role");
+    }
+  };
+
+  const handleStatusChange = async (userId: string, isActive: boolean) => {
+    try {
+      await adminService.updateUserStatus(userId, isActive);
+      setUsers(prev => prev.map(u => u._id === userId ? { ...u, isActive } : u));
+    } catch (e) {
+      alert("Failed to change user status");
+    }
+  };
+
+  const handleSuggestion = async (suggestionId: string, status: string) => {
+    try {
+      await adminService.updateSuggestionStatus(suggestionId, status);
+      setSuggestions(prev => prev.filter(s => s._id !== suggestionId));
+    } catch (e) {
+      alert("Failed to update suggestion");
+    }
+  };
+
+  return (
+    <div className="min-h-screen bg-gray-50">
+      {/* Header */}
+      <div className="bg-white border-b border-gray-200 sticky top-0 z-40">
+        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-4 flex justify-between items-center">
+          <div>
+            <h1 className="text-3xl font-black text-gray-900 italic">flavorfinder</h1>
+            <p className="text-sm text-gray-500 font-semibold">Admin Control Center</p>
+          </div>
+          <div className="flex items-center gap-6">
+            <div className="text-right">
+              <p className="text-sm font-bold text-gray-900">{currentUser.name}</p>
+              <p className="text-xs text-gray-500 uppercase tracking-wider">Administrator</p>
+            </div>
+            <button 
+              onClick={handleLogout}
+              className="bg-red-600 hover:bg-red-700 text-white px-6 py-2 rounded-lg font-bold text-sm transition-all"
+            >
+              Logout
+            </button>
+          </div>
+        </div>
+      </div>
+
+      {/* Navigation Tabs */}
+      <div className="bg-white border-b border-gray-200 sticky top-16 z-30">
+        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
+          <div className="flex gap-8">
+            {[
+              { id: 'dashboard', label: '📊 Dashboard', icon: 'fa-chart-line' },
+              { id: 'users', label: '👥 Users', icon: 'fa-users' },
+              { id: 'restaurants', label: '🍽️ Restaurants', icon: 'fa-store' },
+              { id: 'orders', label: '📦 Orders', icon: 'fa-box' },
+              { id: 'suggestions', label: '📝 Suggestions', icon: 'fa-lightbulb' },
+              { id: 'activity', label: '👁️ Activity Logs', icon: 'fa-list' },
+              { id: 'analytics', label: '📈 Analytics', icon: 'fa-chart-bar' }
+            ].map((tab) => (
+              <button
+                key={tab.id}
+                onClick={() => setActiveTab(tab.id as any)}
+                className={`py-4 px-2 border-b-2 font-bold text-sm transition-all whitespace-nowrap ${
+                  activeTab === tab.id
+                    ? 'border-blue-600 text-blue-600'
+                    : 'border-transparent text-gray-600 hover:text-gray-900'
+                }`}
+              >
+                {tab.label}
+              </button>
+            ))}
+          </div>
+        </div>
+      </div>
+
+      <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-12">
+        {/* Dashboard Tab */}
+        {activeTab === 'dashboard' && (
+          <div className="space-y-8">
+            {/* Key Metrics */}
+            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+              {[
+                { label: 'Total Users', value: stats.totalUsers, icon: '👥', color: 'blue' },
+                { label: 'Total Restaurants', value: stats.totalRestaurants, icon: '🍽️', color: 'green' },
+                { label: 'Active Orders', value: stats.totalOrders, icon: '📦', color: 'orange' },
+                { label: 'Total Revenue', value: `₹${stats.totalRevenue.toLocaleString()}`, icon: '💰', color: 'purple' },
+                { label: 'Avg Order Value', value: `₹${stats.avgOrderValue}`, icon: '📊', color: 'pink' },
+                { label: 'Open Restaurants', value: stats.activeRestaurants, icon: '🟢', color: 'cyan' }
+              ].map((metric, i) => (
+                <div key={i} className="bg-white rounded-2xl p-6 border border-gray-200 shadow-sm hover:shadow-lg transition-all">
+                  <div className="flex items-start justify-between">
+                    <div>
+                      <p className="text-gray-600 text-sm font-semibold mb-2">{metric.label}</p>
+                      <p className="text-3xl font-black text-gray-900">{metric.value}</p>
+                    </div>
+                    <div className="text-4xl">{metric.icon}</div>
+                  </div>
+                </div>
+              ))}
+            </div>
+
+            {/* Recent Activity */}
+            <div className="bg-white rounded-2xl p-6 border border-gray-200">
+              <h2 className="text-xl font-black mb-6">Recent Orders</h2>
+              <div className="overflow-x-auto">
+                <table className="w-full">
+                  <thead className="bg-gray-50 border-b border-gray-200">
+                    <tr>
+                      <th className="text-left py-3 px-4 font-bold text-sm text-gray-600">Order ID</th>
+                      <th className="text-left py-3 px-4 font-bold text-sm text-gray-600">Restaurant</th>
+                      <th className="text-left py-3 px-4 font-bold text-sm text-gray-600">Amount</th>
+                      <th className="text-left py-3 px-4 font-bold text-sm text-gray-600">Status</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {orders.slice(0, 5).map((order) => (
+                      <tr key={order._id} className="border-b border-gray-100 hover:bg-gray-50">
+                        <td className="py-3 px-4 font-mono text-sm">#{order._id.substring(0, 8)}</td>
+                        <td className="py-3 px-4 text-sm font-semibold text-gray-900">{order.restaurantId}</td>
+                        <td className="py-3 px-4 font-bold text-green-600">₹{order.totalAmount}</td>
+                        <td className="py-3 px-4">
+                          <span className={`inline-block px-3 py-1 rounded-full text-xs font-bold ${
+                            (order.orderStatus || order.status) === 'delivered' ? 'bg-green-100 text-green-700' :
+                            (order.orderStatus || order.status) === 'out_for_delivery' ? 'bg-blue-100 text-blue-700' :
+                            'bg-yellow-100 text-yellow-700'
+                          }`}>
+                            {order.orderStatus || order.status}
+                          </span>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* Users Tab */}
+        {activeTab === 'users' && (
+          <div className="bg-white rounded-2xl p-6 border border-gray-200">
+            <h2 className="text-xl font-black mb-6">All Users ({users.length})</h2>
+            <div className="overflow-x-auto">
+              <table className="w-full">
+                <thead className="bg-gray-50 border-b border-gray-200">
+                  <tr>
+                    <th className="text-left py-3 px-4 font-bold text-sm text-gray-600">Name</th>
+                    <th className="text-left py-3 px-4 font-bold text-sm text-gray-600">Email</th>
+                    <th className="text-left py-3 px-4 font-bold text-sm text-gray-600">Role</th>
+                    <th className="text-left py-3 px-4 font-bold text-sm text-gray-600">Status</th>
+                    <th className="text-right py-3 px-4 font-bold text-sm text-gray-600">Actions</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {users.map((user: any) => (
+                    <tr key={user._id} className="border-b border-gray-100 hover:bg-gray-50">
+                      <td className="py-3 px-4 font-semibold text-gray-900">{user.name}</td>
+                      <td className="py-3 px-4 text-sm text-gray-600">{user.email}</td>
+                      <td className="py-3 px-4">
+                        <select 
+                          className="text-xs bg-gray-100 px-2 py-1 rounded" 
+                          value={user.role} 
+                          onChange={(e) => handleRoleChange(user._id, e.target.value)}
+                        >
+                           <option value="customer">Customer</option>
+                           <option value="restaurant_owner">Restaurant Partner</option>
+                           <option value="delivery_partner">Delivery Partner</option>
+                           <option value="admin">Admin</option>
+                        </select>
+                      </td>
+                      <td className="py-3 px-4">
+                         <span className={`inline-block px-3 py-1 rounded-full text-xs font-bold ${user.isActive ? 'bg-green-100 text-green-700' : 'bg-red-100 text-red-700'}`}>
+                           {user.isActive ? 'Active' : 'Disabled'}
+                         </span>
+                      </td>
+                      <td className="py-3 px-4 text-right">
+                         <button 
+                            onClick={() => handleStatusChange(user._id, !user.isActive)}
+                            className={`text-xs font-bold px-3 py-1 rounded border ${user.isActive ? 'text-red-600 border-red-600 hover:bg-red-50' : 'text-green-600 border-green-600 hover:bg-green-50'}`}
+                         >
+                            {user.isActive ? 'Ban/Disable' : 'Enable'}
+                         </button>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        )}
+
+        {/* Restaurants Tab */}
+        {activeTab === 'restaurants' && (
+          <div className="bg-white rounded-2xl p-6 border border-gray-200">
+            <h2 className="text-xl font-black mb-6">All Restaurants ({restaurants.length})</h2>
+            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+              {restaurants.map((restaurant) => (
+                <div key={restaurant._id} className="border border-gray-200 rounded-xl overflow-hidden hover:shadow-lg transition-all">
+                  <img 
+                    src={restaurant.imageUrl || 'https://via.placeholder.com/300x200?text=Restaurant'} 
+                    alt={restaurant.name}
+                    className="w-full h-40 object-cover"
+                  />
+                  <div className="p-4">
+                    <h3 className="font-black text-lg text-gray-900 mb-2">{restaurant.name}</h3>
+                    <p className="text-sm text-gray-600 mb-3">{restaurant.cuisine.join(', ')}</p>
+                    <div className="flex justify-between items-center text-sm">
+                      <span className="font-bold text-gray-900">⭐ {restaurant.rating}</span>
+                      <span className={`font-bold ${restaurant.isOpen ? 'text-green-600' : 'text-red-600'}`}>
+                        {restaurant.isOpen ? '🟢 Open' : '🔴 Closed'}
+                      </span>
+                    </div>
+                  </div>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
+
+        {/* Orders Tab */}
+        {activeTab === 'orders' && (
+          <div className="bg-white rounded-2xl p-6 border border-gray-200">
+            <h2 className="text-xl font-black mb-6">All Orders ({orders.length})</h2>
+            <div className="space-y-4">
+              {orders.map((order) => (
+                <div key={order._id} className="border border-gray-200 rounded-lg p-4 hover:bg-gray-50 transition-all">
+                  <div className="flex justify-between items-start">
+                    <div>
+                      <p className="font-bold text-gray-900">Order #{order._id.substring(0, 8)}</p>
+                      <p className="text-sm text-gray-600 mt-1">Amount: ₹{order.totalAmount}</p>
+                    </div>
+                    <span className={`px-3 py-1 rounded-full text-xs font-bold ${
+                      (order.orderStatus || order.status) === 'delivered' ? 'bg-green-100 text-green-700' :
+                      (order.orderStatus || order.status) === 'out_for_delivery' ? 'bg-blue-100 text-blue-700' :
+                      (order.orderStatus || order.status) === 'preparing' ? 'bg-yellow-100 text-yellow-700' :
+                      'bg-gray-100 text-gray-700'
+                    }`}>
+                      {order.orderStatus || order.status}
+                    </span>
+                  </div>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
+
+        {/* Suggestions Tab */}
+        {activeTab === 'suggestions' && (
+          <div className="bg-white rounded-2xl p-6 border border-gray-200">
+            <h2 className="text-xl font-black mb-6">Pending Restaurant Suggestions ({suggestions.length})</h2>
+            <div className="space-y-4">
+              {suggestions.length === 0 && <p className="text-gray-500 text-sm">No pending suggestions.</p>}
+              {suggestions.map((suggestion) => (
+                <div key={suggestion._id} className="border border-gray-200 rounded-lg p-5 hover:bg-gray-50 transition-all flex justify-between items-center">
+                  <div>
+                    <h3 className="font-black text-gray-900">{suggestion.name} <span className="text-xs font-bold bg-blue-100 text-blue-800 px-2 rounded-full">{suggestion.cuisine?.join(', ')}</span></h3>
+                    <p className="text-sm text-gray-500 mt-1">{suggestion.location?.address}</p>
+                    <p className="text-xs text-gray-400 mt-1">Suggested by: {suggestion.suggestedBy} | Phone: {suggestion.phone}</p>
+                  </div>
+                  <div className="flex gap-2">
+                    <button onClick={() => handleSuggestion(suggestion._id, 'approved')} className="bg-green-100 text-green-700 hover:bg-green-200 font-bold px-4 py-2 rounded-lg text-sm transition">Approve</button>
+                    <button onClick={() => handleSuggestion(suggestion._id, 'rejected')} className="bg-red-100 text-red-700 hover:bg-red-200 font-bold px-4 py-2 rounded-lg text-sm transition">Reject</button>
+                  </div>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
+
+        {/* Activity Logs Tab */}
+        {activeTab === 'activity' && (
+          <div className="bg-white rounded-2xl p-6 border border-gray-200">
+            <h2 className="text-xl font-black mb-6">System Activity Logs</h2>
+            <div className="overflow-x-auto">
+              <table className="w-full text-left">
+                <thead className="bg-gray-50 border-b">
+                  <tr>
+                    <th className="py-3 px-4 font-bold text-sm text-gray-600">Timestamp</th>
+                    <th className="py-3 px-4 font-bold text-sm text-gray-600">User Email</th>
+                    <th className="py-3 px-4 font-bold text-sm text-gray-600">Role</th>
+                    <th className="py-3 px-4 font-bold text-sm text-gray-600">Action</th>
+                    <th className="py-3 px-4 font-bold text-sm text-gray-600">Details</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {activityLogs.map((log) => (
+                    <tr key={log._id} className="border-b border-gray-100 hover:bg-gray-50">
+                      <td className="py-3 px-4 text-xs text-gray-500">{new Date(log.createdAt).toLocaleString()}</td>
+                      <td className="py-3 px-4 text-sm font-semibold">{log.userId?.email || 'System'}</td>
+                      <td className="py-3 px-4 text-xs font-bold uppercase tracking-widest text-[#EF4F5F]">{log.userRole}</td>
+                      <td className="py-3 px-4 text-sm font-bold text-gray-800">{log.action}</td>
+                      <td className="py-3 px-4 text-xs text-gray-500 font-mono">
+                        {log.details ? JSON.stringify(log.details) : '-'}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        )}
+
+        {/* Analytics Tab */}
+        {activeTab === 'analytics' && (
+          <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+            <div className="bg-white rounded-2xl p-6 border border-gray-200">
+              <h2 className="text-lg font-black mb-4">Platform Growth</h2>
+              <div className="space-y-3">
+                <div>
+                  <p className="text-sm font-semibold text-gray-600 mb-1">User Growth: {stats.totalUsers}</p>
+                  <div className="w-full bg-gray-200 rounded-full h-2">
+                    <div className="bg-blue-600 h-2 rounded-full" style={{width: `${Math.min((stats.totalUsers / 100) * 100, 100)}%`}}></div>
+                  </div>
+                </div>
+                <div>
+                  <p className="text-sm font-semibold text-gray-600 mb-1">Restaurant Network: {stats.totalRestaurants}</p>
+                  <div className="w-full bg-gray-200 rounded-full h-2">
+                    <div className="bg-green-600 h-2 rounded-full" style={{width: `${Math.min((stats.totalRestaurants / 50) * 100, 100)}%`}}></div>
+                  </div>
+                </div>
+                <div>
+                  <p className="text-sm font-semibold text-gray-600 mb-1">Order Volume: {stats.totalOrders}</p>
+                  <div className="w-full bg-gray-200 rounded-full h-2">
+                    <div className="bg-orange-600 h-2 rounded-full" style={{width: `${Math.min((stats.totalOrders / 100) * 100, 100)}%`}}></div>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            <div className="bg-white rounded-2xl p-6 border border-gray-200">
+              <h2 className="text-lg font-black mb-4">Revenue Stats</h2>
+              <div className="space-y-4">
+                <div className="flex justify-between items-center">
+                  <p className="text-gray-600 font-semibold">Total Revenue</p>
+                  <p className="text-2xl font-black text-green-600">₹{stats.totalRevenue.toLocaleString()}</p>
+                </div>
+                <div className="flex justify-between items-center">
+                  <p className="text-gray-600 font-semibold">Avg Order Value</p>
+                  <p className="text-2xl font-black text-blue-600">₹{stats.avgOrderValue}</p>
+                </div>
+                <div className="flex justify-between items-center">
+                  <p className="text-gray-600 font-semibold">Platform Fee (10%)</p>
+                  <p className="text-2xl font-black text-purple-600">₹{Math.round(stats.totalRevenue * 0.1).toLocaleString()}</p>
+                </div>
+              </div>
+            </div>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+};
+
+export default AdminDashboardComplete;

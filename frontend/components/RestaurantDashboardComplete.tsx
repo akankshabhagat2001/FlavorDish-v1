@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { User, Restaurant, MenuItem, Order } from '../types';
 import { db } from '../database/db.ts';
-import { foodService, orderService, restaurantService } from '../services';
+import { foodService, orderService, restaurantService, imageUploadService } from '../services';
 
 interface RestaurantDashboardCompleteProps {
   currentUser: User;
@@ -14,11 +14,13 @@ const RestaurantDashboardComplete: React.FC<RestaurantDashboardCompleteProps> = 
   onLogout,
   onViewChange 
 }) => {
-  const [activeTab, setActiveTab] = useState<'overview' | 'menu' | 'orders' | 'earnings' | 'settings'>('overview');
+  const [activeTab, setActiveTab] = useState<'overview' | 'menu' | 'menuList' | 'orders' | 'earnings' | 'settings'>('overview');
   const [restaurant, setRestaurant] = useState<Restaurant | null>(null);
   const [menuItems, setMenuItems] = useState<MenuItem[]>([]);
   const [orders, setOrders] = useState<Order[]>([]);
   const [editingMenuItem, setEditingMenuItem] = useState<MenuItem | null>(null);
+  const [menuImageFile, setMenuImageFile] = useState<File | null>(null);
+  const [csvImportedItems, setCsvImportedItems] = useState<any[]>([]);
   const [menuForm, setMenuForm] = useState({
     itemName: '',
     sku: '',
@@ -103,6 +105,9 @@ const RestaurantDashboardComplete: React.FC<RestaurantDashboardCompleteProps> = 
     userId: raw?.customer?._id || raw?.userId || '',
     restaurantId: raw?.restaurant?._id || raw?.restaurantId || '',
     restaurantName: raw?.restaurant?.name || raw?.restaurantName || '',
+    customerName: raw?.customer?.name || raw?.customerName || raw?.userName || raw?.customer?.fullName || 'Customer',
+    customerPhone: raw?.customer?.phone || raw?.customerPhone || raw?.phone || '',
+    customerAddress: raw?.deliveryAddress?.street ? `${raw.deliveryAddress.street}, ${raw.deliveryAddress.city || ''}` : raw?.deliveryAddress?.address || raw?.customer?.address || '',
     items: raw?.items || [],
     totalAmount: raw?.total || raw?.totalAmount || 0,
     orderStatus: raw?.status || raw?.orderStatus || 'placed',
@@ -114,35 +119,55 @@ const RestaurantDashboardComplete: React.FC<RestaurantDashboardCompleteProps> = 
     const loadData = async () => {
         let userRestaurant = null;
         try {
+          // First try to get restaurants owned by this user
           const myRestaurantsResponse = await restaurantService.getMyRestaurants();
           const myRestaurants = myRestaurantsResponse?.restaurants || [];
           userRestaurant = myRestaurants[0];
 
+          // If no owned restaurants, try to load by restaurantId from user
           if (!userRestaurant && currentUser?.restaurantId) {
+            console.log('No owned restaurants found, trying restaurantId:', currentUser.restaurantId);
             const restaurantResponse = await restaurantService.getRestaurantById(currentUser.restaurantId);
-            userRestaurant = restaurantResponse?.restaurant || null;
+            userRestaurant = restaurantResponse?.restaurant || restaurantResponse?.data || null;
+          }
+
+          // If still no restaurant, try to find any restaurant (for admin users)
+          if (!userRestaurant && currentUser?.role === 'admin') {
+            console.log('Trying to load first available restaurant for admin user');
+            const allRestaurantsResponse = await restaurantService.getRestaurants({ page: 1, limit: 1 });
+            const allRestaurants = allRestaurantsResponse?.restaurants || allRestaurantsResponse?.data || [];
+            userRestaurant = allRestaurants[0];
           }
         } catch (err) {
-          console.warn('API get restaurants failed', err);
+          console.warn('API get restaurants failed:', err);
         }
 
         if (!userRestaurant) {
-          setLoadError('Restaurant not found. Please ensure you are logged in as a restaurant owner and your restaurant is configured.');
+          setLoadError(`Restaurant not found for user ${currentUser?.name || 'Unknown'}.
+Please ensure:
+1. You are logged in as a restaurant owner or admin
+2. Your account is linked to a restaurant
+3. Contact support if you believe this is an error.
+
+User ID: ${currentUser?._id || 'Unknown'}
+User Role: ${currentUser?.role || 'Unknown'}
+Restaurant ID: ${currentUser?.restaurantId || 'Not set'}`);
           setRestaurant(null);
           setMenuItems([]);
           setOrders([]);
           return;
         }
 
+        console.log('Loaded restaurant:', userRestaurant);
         const normalizedRestaurant = normalizeRestaurant(userRestaurant);
         setRestaurant(normalizedRestaurant);
 
         try {
           const [menuResponse, ordersResponse] = await Promise.all([
-            restaurantService.getRestaurantMenu(normalizedRestaurant._id),
+            foodService.getFoods({ restaurant: normalizedRestaurant._id, showUnavailable: true }),
             orderService.getRestaurantOrders({ page: 1, limit: 200 }),
           ]);
-          const rawMenu = (menuResponse as any)?.menu || menuResponse || [];
+          const rawMenu = (menuResponse as any)?.foods || menuResponse || [];
           setMenuItems((Array.isArray(rawMenu) ? rawMenu : []).map(normalizeMenuItem));
           setOrders((ordersResponse?.orders || []).map(normalizeOrder));
         } catch (err) {
@@ -161,6 +186,7 @@ const RestaurantDashboardComplete: React.FC<RestaurantDashboardCompleteProps> = 
 
   const resetMenuForm = () => {
     setEditingMenuItem(null);
+    setMenuImageFile(null);
     setMenuForm({
       itemName: '',
       sku: '',
@@ -182,30 +208,24 @@ const RestaurantDashboardComplete: React.FC<RestaurantDashboardCompleteProps> = 
     const file = e.target.files?.[0];
     if (!file) return;
 
-    // Use object URL if file is large, otherwise base64 for portability.
-    if (file.size > 200_000) {
-      const url = URL.createObjectURL(file);
-      setMenuForm(prev => {
-        appendAudit(`Uploaded large image for ${prev.itemName || 'new item'} (using object URL)`);
-        return { ...prev, image: url };
-      });
+    const validation = imageUploadService.validateImageFile(file);
+    if (!validation.valid) {
+      alert(validation.error || 'Invalid image file.');
       return;
     }
 
-    const reader = new FileReader();
-    reader.onloadend = () => {
-      setMenuForm(prev => {
-        appendAudit(`Uploaded image for ${prev.itemName || 'new item'} (base64)`);
-        return { ...prev, image: reader.result as string };
-      });
-    };
-    reader.readAsDataURL(file);
+    setMenuImageFile(file);
+    const previewUrl = URL.createObjectURL(file);
+    setMenuForm(prev => {
+      appendAudit(`Selected image for ${prev.itemName || 'new item'}`);
+      return { ...prev, image: previewUrl };
+    });
   };
 
   const refreshMenu = async (restaurantId: string) => {
     try {
-      const menuResponse = await restaurantService.getRestaurantMenu(restaurantId);
-      const rawMenu = (menuResponse as any)?.menu || menuResponse || [];
+      const menuResponse = await foodService.getFoods({ restaurant: restaurantId, showUnavailable: true });
+      const rawMenu = (menuResponse as any)?.foods || menuResponse || [];
       setMenuItems((Array.isArray(rawMenu) ? rawMenu : []).map(normalizeMenuItem));
     } catch (err) {
       console.warn('API menu refresh failed', err);
@@ -221,7 +241,7 @@ const RestaurantDashboardComplete: React.FC<RestaurantDashboardCompleteProps> = 
     if (rows.length <= 1) return;
 
     const headers = rows[0].split(',').map(h => h.trim().toLowerCase());
-    const imported: MenuItem[] = [];
+    const imported: any[] = [];
 
     for (let i = 1; i < rows.length; i++) {
       const cols = rows[i].split(',').map(c => c.trim());
@@ -258,30 +278,8 @@ const RestaurantDashboardComplete: React.FC<RestaurantDashboardCompleteProps> = 
       imported.push(item);
     }
 
-    const dbMenu = (db as any).menuItems;
-    for (const item of imported) {
-      try {
-        await foodService.createFood({
-          name: item.itemName,
-          description: item.description,
-          price: item.price,
-          category: item.category || 'General',
-          cuisine: item.category || 'General',
-          images: [{ url: item.image, alt: item.itemName }],
-          isAvailable: item.isAvailable,
-          isVeg: item.isVeg,
-          preparationTime: Number(item.prepTime) || Number(item.preparationTime) || 20,
-          nutritionalInfo: item.nutritionalInfo ? { notes: item.nutritionalInfo } : undefined,
-          tags: item.tags,
-          restaurant: restaurant._id
-        });
-      } catch (apiError) {
-        console.warn('CSV import item failed', apiError);
-      }
-    }
-
-    appendAudit(`Imported ${imported.length} menu items via CSV`);
-    await refreshMenu(restaurant._id);
+    setCsvImportedItems(imported);
+    appendAudit(`Prepared ${imported.length} CSV menu items for sync to database`);
   };
 
   const handleSaveMenuItem = async () => {
@@ -312,6 +310,18 @@ const RestaurantDashboardComplete: React.FC<RestaurantDashboardCompleteProps> = 
     };
     const preparationTimeValue = Number(String(menuForm.prepTime).replace(/\D/g, '')) || 20;
 
+    let imageUrl = menuForm.image;
+    if (menuImageFile) {
+      try {
+        const uploadResult = await imageUploadService.uploadImage(menuImageFile, `restaurant-${restaurant._id}`);
+        imageUrl = uploadResult.url;
+      } catch (uploadError) {
+        console.error('Image upload failed', uploadError);
+        alert('Image upload failed. Please try a different image.');
+        return;
+      }
+    }
+
     const payload = {
       name: menuForm.itemName,
       sku: menuForm.sku,
@@ -322,7 +332,7 @@ const RestaurantDashboardComplete: React.FC<RestaurantDashboardCompleteProps> = 
       preparationTime: preparationTimeValue,
       nutritionalInfo: Object.keys(nutritionalPayload).length ? nutritionalPayload : undefined,
       tags: menuForm.tags.split(',').map((t: string) => t.trim()).filter((t: string) => t),
-      images: [{ url: menuForm.image, alt: menuForm.itemName }],
+      images: [{ url: imageUrl, alt: menuForm.itemName }],
       isVeg: menuForm.isVeg,
       isAvailable: menuForm.isAvailable,
       updatedAt: Date.now(),
@@ -337,9 +347,10 @@ const RestaurantDashboardComplete: React.FC<RestaurantDashboardCompleteProps> = 
         await foodService.createFood(payload);
         appendAudit(`Created new menu item ${menuForm.itemName} (SKU: ${menuForm.sku || 'N/A'})`);
       }
-    } catch (apiError) {
+    } catch (apiError: any) {
       console.error('API upsert menu item failed', apiError);
-      alert('Failed to save menu item. Please try again.');
+      const serverMessage = apiError?.response?.data?.message || apiError?.message;
+      alert(`Failed to save menu item. ${serverMessage || 'Please try again.'}`);
     }
 
     await refreshMenu(restaurant._id);
@@ -390,6 +401,53 @@ const RestaurantDashboardComplete: React.FC<RestaurantDashboardCompleteProps> = 
     localStorage.setItem('partner_audit_log', JSON.stringify([entry, ...auditLog]));
   };
 
+  const refreshOrders = async () => {
+    if (!restaurant) return;
+    try {
+      const ordersResponse = await orderService.getRestaurantOrders({ page: 1, limit: 200 });
+      setOrders((ordersResponse?.orders || []).map(normalizeOrder));
+    } catch (err) {
+      console.warn('API refresh orders failed', err);
+    }
+  };
+
+  const getNextOrderStatus = (currentStatus: string) => {
+    const sequence = ['placed', 'preparing', 'ready', 'out_for_delivery', 'delivered'];
+    const nextIndex = sequence.indexOf(currentStatus) + 1;
+    return sequence[nextIndex] || currentStatus;
+  };
+
+  const handleUpdateOrderStatus = async (order: Order) => {
+    const currentStatus = order.orderStatus || order.status || 'placed';
+    const nextStatus = getNextOrderStatus(currentStatus);
+    if (nextStatus === currentStatus) {
+      alert('This order is already at its final status.');
+      return;
+    }
+
+    try {
+      await orderService.updateOrderStatus(order._id, nextStatus, `Restaurant updated status to ${nextStatus}`);
+      appendAudit(`Updated order ${order._id} to ${nextStatus}`);
+      await refreshOrders();
+    } catch (err) {
+      console.error('API update order status failed', err);
+      alert('Failed to update order status.');
+    }
+  };
+
+  const handleCancelOrder = async (order: Order) => {
+    if (!window.confirm('Cancel this order? This cannot be undone.')) return;
+
+    try {
+      await orderService.cancelOrder(order._id, 'Cancelled by restaurant partner');
+      appendAudit(`Cancelled order ${order._id}`);
+      await refreshOrders();
+    } catch (err) {
+      console.error('API cancel order failed', err);
+      alert('Failed to cancel order.');
+    }
+  };
+
   const handleToggleAvailability = async (item: MenuItem) => {
     const updatedAvailable = !item.isAvailable;
     try {
@@ -408,7 +466,12 @@ const RestaurantDashboardComplete: React.FC<RestaurantDashboardCompleteProps> = 
       return;
     }
 
-    for (const item of menuItems) {
+    if (csvImportedItems.length === 0) {
+      alert('No imported CSV items to sync. Please import a CSV/Excel file first.');
+      return;
+    }
+
+    for (const item of csvImportedItems) {
       try {
         await foodService.createFood({
           name: item.itemName,
@@ -419,7 +482,7 @@ const RestaurantDashboardComplete: React.FC<RestaurantDashboardCompleteProps> = 
           images: [{ url: item.image, alt: item.itemName }],
           isVeg: item.isVeg || false,
           isAvailable: item.isAvailable || false,
-          preparationTime: Number(item.preparationTime) || Number(item.prepTime) || 20,
+          preparationTime: Number(item.prepTime) || Number(item.preparationTime) || 20,
           nutritionalInfo: item.nutritionalInfo ? { notes: item.nutritionalInfo } : undefined,
           tags: item.tags,
           restaurant: restaurant._id
@@ -429,7 +492,10 @@ const RestaurantDashboardComplete: React.FC<RestaurantDashboardCompleteProps> = 
       }
     }
 
-    appendAudit('Synced local menu items to global restaurant food collection');
+    const importedCount = csvImportedItems.length;
+    appendAudit(`Synced ${importedCount} imported CSV items to database`);
+    setCsvImportedItems([]);
+    alert(`Successfully imported ${importedCount} menu items to your database!`);
     if (restaurant) await refreshMenu(restaurant._id);
   };
 
@@ -533,7 +599,8 @@ const RestaurantDashboardComplete: React.FC<RestaurantDashboardCompleteProps> = 
           <div className="flex gap-8">
             {[
               { id: 'overview', label: '📊 Overview', icon: 'overview' },
-              { id: 'menu', label: '🍽️ Menu Items', icon: 'menu' },
+              { id: 'menu', label: '🛠️ Manage Menu', icon: 'menu' },
+              { id: 'menuList', label: '📋 Menu List', icon: 'menuList' },
               { id: 'orders', label: '📦 Orders', icon: 'orders' },
               { id: 'earnings', label: '💰 Earnings', icon: 'earnings' },
               { id: 'settings', label: '⚙️ Settings', icon: 'settings' }
@@ -633,7 +700,7 @@ const RestaurantDashboardComplete: React.FC<RestaurantDashboardCompleteProps> = 
           <div className="space-y-6">
             <div className="bg-white rounded-2xl p-6 border border-gray-200">
               <div className="mb-4 flex flex-col lg:flex-row gap-3 justify-between">
-                <h2 className="text-xl font-black">{editingMenuItem ? 'Edit Dish' : 'Add New Dish'}</h2>
+                <h2 className="text-xl font-black">Menu Management</h2>
                 <div className="flex flex-wrap gap-2 items-center">
                   <input
                     type="search"
@@ -666,11 +733,27 @@ const RestaurantDashboardComplete: React.FC<RestaurantDashboardCompleteProps> = 
                     onChange={(e) => setMaxPrice(e.target.value ? Number(e.target.value) : undefined)}
                     className="w-20 px-3 py-2 border border-gray-300 rounded-lg"
                   />
-                  <button onClick={() => csvInputRef.current?.click()} className="px-3 py-2 bg-blue-600 text-white rounded-lg font-bold">CSV Import</button>
-                  <button onClick={syncMenuToFoodCollection} className="px-3 py-2 bg-green-600 text-white rounded-lg font-bold">Sync to Menu DB</button>
+                  <button onClick={() => csvInputRef.current?.click()} className="px-3 py-2 bg-blue-600 text-white rounded-lg font-bold">Import CSV</button>
+                  <button onClick={syncMenuToFoodCollection} className="px-3 py-2 bg-green-600 text-white rounded-lg font-bold">Save Imported</button>
                   <input ref={csvInputRef} type="file" accept=".csv" className="hidden" onChange={handleCsvImport} />
                 </div>
               </div>
+              {csvImportedItems.length > 0 && (
+                <div className="mb-4 rounded-xl border border-green-200 bg-green-50 p-4">
+                  <div className="flex items-center justify-between">
+                    <div>
+                      <h4 className="font-bold text-green-800 text-sm">CSV Import Ready</h4>
+                      <p className="text-green-700 text-sm">{csvImportedItems.length} menu item(s) prepared for import.</p>
+                    </div>
+                    <button
+                      onClick={syncMenuToFoodCollection}
+                      className="px-4 py-2 bg-green-600 text-white rounded-lg font-bold hover:bg-green-700 transition-all"
+                    >
+                      Save to Database
+                    </button>
+                  </div>
+                </div>
+              )}
               <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
                 <div>
                   <label className="text-xs font-bold uppercase text-gray-500">Dish Image</label>
@@ -845,10 +928,47 @@ const RestaurantDashboardComplete: React.FC<RestaurantDashboardCompleteProps> = 
               <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
                 {filteredMenuItems.length === 0 ? (
                   <div className="col-span-full bg-gray-50 border border-dashed border-gray-300 rounded-3xl p-10 text-center">
-                    <p className="text-gray-500 text-sm font-bold mb-4">No menu items found. Add your first dish or adjust the search filters.</p>
-                    <button onClick={resetMenuForm} className="px-4 py-3 bg-red-600 text-white rounded-xl font-black text-sm uppercase tracking-widest hover:bg-red-700">
-                      Add New Dish
-                    </button>
+                    <div className="mb-6">
+                      <div className="w-16 h-16 bg-blue-100 rounded-full flex items-center justify-center mx-auto mb-4">
+                        <i className="fa-solid fa-file-csv text-blue-600 text-2xl"></i>
+                      </div>
+                      <h3 className="text-lg font-black text-gray-900 mb-2">Start Building Your Menu</h3>
+                      <p className="text-gray-500 text-sm mb-6">Import your menu items from a CSV file or Excel sheet to get started quickly.</p>
+                    </div>
+
+                    <div className="space-y-4">
+                      <div className="bg-white rounded-xl p-4 border border-gray-200">
+                        <h4 className="font-bold text-gray-900 mb-2">CSV Format Required:</h4>
+                        <p className="text-xs text-gray-600 mb-2">First row should be headers. Required columns: name, price, category</p>
+                        <p className="text-xs text-gray-500 mb-2">Optional: description, isveg, isavailable, preptime, nutritionalinfo, tags</p>
+                        <a
+                          href="data:text/csv;charset=utf-8,name,price,category,description,isveg,isavailable,preptime
+Butter Chicken,299,Main Course,Rich and creamy butter chicken with naan,true,true,20 min
+Paneer Tikka,199,Appetizer,Grilled paneer with spices,true,true,15 min
+Chicken Biryani,349,Main Course,Aromatic basmati rice with tender chicken,false,true,25 min"
+                          download="menu-sample.csv"
+                          className="text-xs text-blue-600 hover:text-blue-800 underline"
+                        >
+                          Download Sample CSV
+                        </a>
+                      </div>
+
+                      <div className="flex gap-3 justify-center">
+                        <button
+                          onClick={() => csvInputRef.current?.click()}
+                          className="px-6 py-3 bg-blue-600 text-white rounded-xl font-black text-sm uppercase tracking-widest hover:bg-blue-700 transition-all"
+                        >
+                          <i className="fa-solid fa-upload mr-2"></i>
+                          Import CSV File
+                        </button>
+                        <button
+                          onClick={resetMenuForm}
+                          className="px-6 py-3 bg-gray-200 text-gray-700 rounded-xl font-black text-sm uppercase tracking-widest hover:bg-gray-300 transition-all"
+                        >
+                          Add Single Dish
+                        </button>
+                      </div>
+                    </div>
                   </div>
                 ) : filteredMenuItems.map((item) => (
                   <div key={item._id} className="border border-gray-200 rounded-xl p-4 relative bg-white">
@@ -884,6 +1004,67 @@ const RestaurantDashboardComplete: React.FC<RestaurantDashboardCompleteProps> = 
           </div>
         )}
 
+        {activeTab === 'menuList' && (
+          <div className="space-y-6">
+            <div className="bg-white rounded-2xl p-6 border border-gray-200">
+              <div className="mb-4 flex flex-col lg:flex-row gap-3 justify-between items-center">
+                <div>
+                  <h2 className="text-xl font-black">Menu List</h2>
+                  <p className="text-sm text-gray-500">Browse and edit all dishes in your restaurant menu.</p>
+                </div>
+                <div className="flex flex-wrap gap-2 items-center">
+                  <input
+                    type="search"
+                    placeholder="Search food, description, tags..."
+                    value={searchQuery}
+                    onChange={(e) => setSearchQuery(e.target.value)}
+                    className="px-3 py-2 border border-gray-300 rounded-lg"
+                  />
+                  <select value={filterCategory} onChange={(e) => setFilterCategory(e.target.value)} className="px-3 py-2 border border-gray-300 rounded-lg">
+                    <option>All</option>
+                    {[...new Set(menuItems.map(item => item.category))].map(cat => <option key={cat}>{cat}</option>)}
+                  </select>
+                  <button onClick={() => resetMenuForm()} className="px-3 py-2 bg-blue-600 text-white rounded-lg font-bold">Add New Dish</button>
+                </div>
+              </div>
+              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+                {filteredMenuItems.length === 0 ? (
+                  <div className="col-span-full bg-gray-50 border border-dashed border-gray-300 rounded-3xl p-10 text-center">
+                    <h3 className="text-lg font-black text-gray-900 mb-2">No menu items found</h3>
+                    <p className="text-gray-500 text-sm">Add dishes under the Manage Menu tab or import them from a CSV file.</p>
+                  </div>
+                ) : filteredMenuItems.map((item) => (
+                  <div key={item._id} className="border border-gray-200 rounded-xl p-4 relative bg-white">
+                    <img
+                      src={item.image || 'https://via.placeholder.com/300x180?text=No+Image'}
+                      alt={item.itemName}
+                      className="w-full h-40 object-cover rounded-lg mb-3"
+                    />
+                    <h4 className="text-lg font-black text-gray-900 mb-1">{item.itemName} {item.sku && <span className="text-xs text-gray-500 font-normal">({item.sku})</span>}</h4>
+                    <p className="text-xs text-gray-500 mb-1">{item.category} • {item.prepTime || 'N/A'} prep</p>
+                    <p className="text-sm text-gray-600 mb-2 line-clamp-2">{item.description}</p>
+                    {item.tags && item.tags.length > 0 && <p className="text-xs text-gray-500 mb-2">Tags: {item.tags.join(', ')}</p>}
+                    <div className="flex items-center justify-between mb-3">
+                      <span className="text-2xl font-black text-emerald-600">₹{item.price}</span>
+                      <span className={`text-xs px-2 py-1 rounded-full font-black ${item.isAvailable ? 'bg-emerald-100 text-emerald-700' : 'bg-red-100 text-red-700'}`}>
+                        {item.isAvailable ? 'Available' : 'Unavailable'}
+                      </span>
+                    </div>
+                    <div className="flex items-center justify-between gap-2">
+                      <button onClick={() => handleStartEditing(item)} className="flex-1 text-xs font-black uppercase tracking-widest py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-lg">
+                        Edit
+                      </button>
+                      <button onClick={() => handleDeleteMenuItem(item._id)} className="flex-1 text-xs font-black uppercase tracking-widest py-2 bg-red-600 hover:bg-red-700 text-white rounded-lg">
+                        Delete
+                      </button>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
+          </div>
+        )}
+
         {/* Orders Tab */}
         <div className="mb-4 flex items-center justify-between gap-4">
           <label className="flex items-center gap-2 font-bold text-sm">
@@ -910,32 +1091,71 @@ const RestaurantDashboardComplete: React.FC<RestaurantDashboardCompleteProps> = 
         {activeTab === 'orders' && (
           <div className="bg-white rounded-2xl p-6 border border-gray-200">
             <h2 className="text-xl font-black mb-4">All Orders ({orders.length})</h2>
-            <div className="space-y-3">
-              {orders.map((order) => (
-                <div key={order._id} className="border border-gray-200 rounded-lg p-4 hover:bg-gray-50 transition-all">
-                  <div className="flex justify-between items-start">
-                    <div>
-                      <p className="font-bold text-gray-900">Order #{order._id.substring(0, 8)}</p>
-                      <p className="text-sm text-gray-600 mt-1">₹{order.totalAmount} • {order.items?.length || 1} item(s)</p>
-                    </div>
-                    <div className="text-right">
-                      <span className={`block px-3 py-1 rounded-full text-xs font-bold mb-2 w-fit ml-auto ${
-                      (order.orderStatus || order.status) === 'delivered' ? 'bg-green-100 text-green-700' :
-                      (order.orderStatus || order.status) === 'out_for_delivery' ? 'bg-blue-100 text-blue-700' :
-                      (order.orderStatus || order.status) === 'preparing' ? 'bg-yellow-100 text-yellow-700' :
-                        'bg-gray-100 text-gray-700'
-                      }`}>
-                        {order.orderStatus || order.status}
-                      </span>
-                      {['placed', 'preparing'].includes(order.orderStatus || order.status || 'placed') && (
-                        <button className="text-xs font-bold text-red-600 hover:text-red-700">
-                          Update Status
-                        </button>
-                      )}
+            <div className="space-y-4">
+              {orders.map((order) => {
+                const currentStatus = order.orderStatus || order.status || 'placed';
+                const nextStatus = getNextOrderStatus(currentStatus);
+                const isCancelable = !['delivered', 'cancelled'].includes(currentStatus);
+                const canAdvance = ['placed', 'preparing', 'ready', 'out_for_delivery'].includes(currentStatus);
+
+                return (
+                  <div key={order._id} className="border border-gray-200 rounded-lg p-4 hover:bg-gray-50 transition-all">
+                    <div className="flex flex-col lg:flex-row lg:justify-between gap-4">
+                      <div className="space-y-2">
+                        <div className="flex flex-wrap gap-3 items-center">
+                          <p className="font-bold text-gray-900">Order #{order._id.substring(0, 8)}</p>
+                          <span className={`px-3 py-1 rounded-full text-xs font-black ${
+                            currentStatus === 'delivered' ? 'bg-green-100 text-green-700' :
+                            currentStatus === 'cancelled' ? 'bg-red-100 text-red-700' :
+                            currentStatus === 'out_for_delivery' ? 'bg-blue-100 text-blue-700' :
+                            currentStatus === 'preparing' ? 'bg-yellow-100 text-yellow-700' :
+                            'bg-gray-100 text-gray-700'
+                          }`}>
+                            {currentStatus.replace(/_/g, ' ').toUpperCase()}
+                          </span>
+                        </div>
+                        <p className="text-sm text-gray-600">₹{order.totalAmount} • {order.items?.length || 1} item(s)</p>
+                        <p className="text-sm text-gray-600">Customer: {order.customerName}</p>
+                        {order.customerPhone && <p className="text-sm text-gray-600">Phone: {order.customerPhone}</p>}
+                        {order.customerAddress && <p className="text-sm text-gray-600">Address: {order.customerAddress}</p>}
+                        <p className="text-sm text-gray-500">Placed on {new Date(order.createdAt).toLocaleString()}</p>
+                      </div>
+
+                      <div className="space-y-3 w-full lg:w-auto">
+                        <div className="bg-gray-50 rounded-xl p-3 text-sm text-gray-700">
+                          <p className="font-semibold mb-2">Items</p>
+                          <ul className="space-y-1">
+                            {order.items?.map((item: any, idx: number) => (
+                              <li key={idx} className="flex justify-between gap-4">
+                                <span>{typeof item.food === 'string' ? item.food : item.food?.name || item.name || 'Item'}</span>
+                                <span className="font-bold">x{item.quantity || 1}</span>
+                              </li>
+                            ))}
+                          </ul>
+                        </div>
+                        <div className="flex flex-wrap gap-2">
+                          {canAdvance && (
+                            <button
+                              onClick={() => handleUpdateOrderStatus(order)}
+                              className="px-4 py-2 bg-blue-600 text-white rounded-lg text-xs font-black uppercase tracking-widest hover:bg-blue-700"
+                            >
+                              Advance to {nextStatus.replace(/_/g, ' ')}
+                            </button>
+                          )}
+                          {isCancelable && (
+                            <button
+                              onClick={() => handleCancelOrder(order)}
+                              className="px-4 py-2 bg-red-600 text-white rounded-lg text-xs font-black uppercase tracking-widest hover:bg-red-700"
+                            >
+                              Cancel Order
+                            </button>
+                          )}
+                        </div>
+                      </div>
                     </div>
                   </div>
-                </div>
-              ))}
+                );
+              })}
             </div>
           </div>
         )}

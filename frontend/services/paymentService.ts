@@ -1,6 +1,20 @@
 import api from './authService';
 
 export const paymentService = {
+  createRazorpayOrder: async (orderId: string) => {
+    const response = await api.post('/payments/razorpay/create-order', { orderId });
+    return response.data;
+  },
+
+  verifyRazorpayPayment: async (payload: {
+    razorpay_order_id: string;
+    razorpay_payment_id: string;
+    razorpay_signature: string;
+  }) => {
+    const response = await api.post('/payments/razorpay/verify', payload);
+    return response.data;
+  },
+
   processPayment: async (orderId: string, amount: number, method: 'card' | 'upi' | 'cash_on_delivery') => {
     const response = await api.post('/payments/process', {
       orderId,

@@ -50,11 +50,20 @@ const MapView: React.FC<MapViewProps> = ({
       // Initialize Leaflet map
       const map = L.map(mapRef.current).setView([center.lat, center.lng], 13);
 
-      // Add OpenStreetMap tiles (free)
-      L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
-        attribution: '© OpenStreetMap contributors',
-        maxZoom: 19,
-      }).addTo(map);
+      // Add MapTiler tiles
+      const apiKey = import.meta.env.VITE_MAPTILER_API_KEY;
+      if (apiKey) {
+        L.tileLayer(`https://api.maptiler.com/maps/streets-v2/{z}/{x}/{y}.png?key=${apiKey}`, {
+          attribution: '© MapTiler © OpenStreetMap contributors',
+          maxZoom: 19,
+        }).addTo(map);
+      } else {
+        // Fallback to OpenStreetMap if no MapTiler key
+        L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+          attribution: '© OpenStreetMap contributors',
+          maxZoom: 19,
+        }).addTo(map);
+      }
 
       mapInstance.current = map;
       setIsMapLoaded(true);

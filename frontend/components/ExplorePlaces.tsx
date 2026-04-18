@@ -6,10 +6,11 @@
 
 import React, { useState, useEffect } from 'react';
 import { Restaurant } from '../types';
-import { googleMapsRestaurantService } from '../services/googleMapsRestaurantService';
+import { restaurantService, foodService, suggestionService } from '../services';
 import RestaurantLocationMap from './RestaurantLocationMap';
 
 interface ExplorePlace {
+  id: string;
   name: string;
   description: string;
   rating: number;
@@ -20,6 +21,8 @@ interface ExplorePlace {
   lat: number;
   lng: number;
   address: string;
+  type: 'restaurant' | 'food' | 'suggestion';
+  source: 'database' | 'user_suggestion';
 }
 
 interface ExplorePlacesProps {
@@ -41,22 +44,81 @@ const ExplorePlaces: React.FC<ExplorePlacesProps> = ({ userLocation, onRestauran
   const loadExplorePlaces = async () => {
     setLoading(true);
     try {
-      const data = await googleMapsRestaurantService.getExploreAhmedabad();
-      const places: ExplorePlace[] = data.map((d) => ({
-        name: d.name,
-        description: `Best spot for ${d.cuisines.join(', ')}`,
-        rating: d.rating,
-        reviewCount: d.reviewCount,
-        cuisines: d.cuisines,
-        specialty: d.cuisines[0] || 'Food',
-        imageEmoji: getEmojiForCuisine(d.cuisines[0]),
-        lat: d.lat,
-        lng: d.lng,
-        address: d.address,
+      // Fetch real data from database
+      const [restaurantsResponse, foodsResponse, suggestionsResponse] = await Promise.all([
+        restaurantService.getRestaurants({ limit: 50 }),
+        foodService.getFoods({ limit: 50 }),
+        suggestionService.getSuggestions('approved')
+      ]);
+
+      const restaurants = restaurantsResponse?.restaurants || restaurantsResponse || [];
+      const foods = foodsResponse?.foods || foodsResponse || [];
+      const suggestions = suggestionsResponse?.suggestions || suggestionsResponse || [];
+
+      // Convert restaurants to explore places
+      const restaurantPlaces: ExplorePlace[] = restaurants.map((r: any) => ({
+        id: r._id,
+        name: r.name,
+        description: r.description || `Authentic ${r.cuisine?.join(', ')} cuisine`,
+        rating: r.rating || 4.0,
+        reviewCount: r.reviewCount || 0,
+        cuisines: r.cuisine || ['Multi-cuisine'],
+        specialty: r.cuisine?.[0] || 'Food',
+        imageEmoji: getEmojiForCuisine(r.cuisine?.[0] || 'Food'),
+        lat: r.location?.latitude || 23.0225,
+        lng: r.location?.longitude || 72.5714,
+        address: r.location?.address || r.address || 'Ahmedabad',
+        type: 'restaurant',
+        source: 'database'
       }));
-      setExplorePlaces(places);
+
+      // Convert food items to explore places (group by restaurant)
+      const foodPlaces: ExplorePlace[] = foods
+        .filter((f: any) => f.isAvailable)
+        .slice(0, 20) // Limit to 20 food items
+        .map((f: any) => ({
+          id: f._id,
+          name: f.name,
+          description: f.description || `Delicious ${f.category} dish`,
+          rating: f.rating || 4.2,
+          reviewCount: f.reviewCount || 0,
+          cuisines: [f.category || 'Food'],
+          specialty: f.tags?.join(', ') || f.category || 'Specialty',
+          imageEmoji: getEmojiForCuisine(f.category || 'Food'),
+          lat: 23.0225 + (Math.random() - 0.5) * 0.1, // Slight random offset
+          lng: 72.5714 + (Math.random() - 0.5) * 0.1,
+          address: 'Various locations in Ahmedabad',
+          type: 'food',
+          source: 'database'
+        }));
+
+      // Convert user suggestions to explore places
+      const suggestionPlaces: ExplorePlace[] = suggestions
+        .filter((s: any) => s.status === 'approved')
+        .map((s: any) => ({
+          id: s._id,
+          name: s.name,
+          description: s.description || `Suggested by ${s.suggestedBy}`,
+          rating: 4.0,
+          reviewCount: 0,
+          cuisines: s.cuisine || ['Multi-cuisine'],
+          specialty: s.cuisine?.[0] || 'Food',
+          imageEmoji: getEmojiForCuisine(s.cuisine?.[0] || 'Food'),
+          lat: 23.0225 + (Math.random() - 0.5) * 0.1,
+          lng: 72.5714 + (Math.random() - 0.5) * 0.1,
+          address: s.location || 'Ahmedabad',
+          type: 'suggestion',
+          source: 'user_suggestion'
+        }));
+
+      // Combine all places
+      const allPlaces = [...restaurantPlaces, ...foodPlaces, ...suggestionPlaces];
+      setExplorePlaces(allPlaces);
+
     } catch (error) {
       console.error('Error loading explore places:', error);
+      // Fallback to empty array if no data
+      setExplorePlaces([]);
     } finally {
       setLoading(false);
     }
@@ -101,7 +163,7 @@ const ExplorePlaces: React.FC<ExplorePlacesProps> = ({ userLocation, onRestauran
 
   if (selectedPlace) {
     const selectedAsRestaurant: Restaurant = {
-      _id: `explore-${selectedPlace.name}`,
+      _id: selectedPlace.id,
       name: selectedPlace.name,
       imageUrl: `https://via.placeholder.com/400x300?text=${encodeURIComponent(selectedPlace.name)}`,
       cuisine: selectedPlace.cuisines,
@@ -129,15 +191,28 @@ const ExplorePlaces: React.FC<ExplorePlacesProps> = ({ userLocation, onRestauran
           <i className="fa-solid fa-arrow-left"></i>
           Back to Explore
         </button>
-        <RestaurantLocationMap
-          restaurant={selectedAsRestaurant}
-          userLocation={userLocation}
-          showDirections={true}
-          allowFullScreen={true}
-          height="450px"
-        />
         <div className="bg-gradient-to-br from-purple-50 to-pink-50 rounded-2xl p-6 border-2 border-purple-200">
-          <h3 className="font-black text-xl text-gray-900 mb-2">{selectedPlace.name}</h3>
+          <div className="flex items-center gap-2 mb-4">
+            <span className="text-3xl">{selectedPlace.imageEmoji}</span>
+            <div>
+              <h3 className="font-black text-xl text-gray-900">{selectedPlace.name}</h3>
+              <div className="flex gap-2 mt-1">
+                <span className={`px-2 py-1 rounded-full text-xs font-bold ${
+                  selectedPlace.type === 'restaurant' ? 'bg-blue-100 text-blue-800' :
+                  selectedPlace.type === 'food' ? 'bg-green-100 text-green-800' :
+                  'bg-orange-100 text-orange-800'
+                }`}>
+                  {selectedPlace.type.toUpperCase()}
+                </span>
+                <span className={`px-2 py-1 rounded-full text-xs font-bold ${
+                  selectedPlace.source === 'database' ? 'bg-purple-100 text-purple-800' :
+                  'bg-pink-100 text-pink-800'
+                }`}>
+                  {selectedPlace.source === 'user_suggestion' ? 'USER SUGGESTED' : 'VERIFIED'}
+                </span>
+              </div>
+            </div>
+          </div>
           <p className="text-gray-600 mb-4">{selectedPlace.description}</p>
           <div className="grid grid-cols-2 gap-3 mb-4">
             <div className="flex items-center gap-2">
@@ -148,9 +223,26 @@ const ExplorePlaces: React.FC<ExplorePlacesProps> = ({ userLocation, onRestauran
             </div>
             <div className="flex items-center gap-2">
               <i className="fa-solid fa-utensils text-purple-600"></i>
-              <span className="font-bold text-gray-900">{selectedPlace.specialty}</span>
+              <span className="text-gray-700">{selectedPlace.cuisines.join(', ')}</span>
+            </div>
+            <div className="flex items-center gap-2">
+              <i className="fa-solid fa-map-marker-alt text-red-500"></i>
+              <span className="text-gray-700">{selectedPlace.address}</span>
+            </div>
+            <div className="flex items-center gap-2">
+              <i className="fa-solid fa-tag text-green-600"></i>
+              <span className="text-gray-700">{selectedPlace.specialty}</span>
             </div>
           </div>
+        </div>
+        <RestaurantLocationMap
+          restaurant={selectedAsRestaurant}
+          userLocation={userLocation}
+          showDirections={true}
+          allowFullScreen={true}
+          height="450px"
+        />
+        <>
           <div className="flex flex-wrap gap-2 mb-4">
             {selectedPlace.cuisines.map((cuisine) => (
               <span
@@ -179,7 +271,7 @@ const ExplorePlaces: React.FC<ExplorePlacesProps> = ({ userLocation, onRestauran
               Explore More
             </button>
           </div>
-        </div>
+        </>
       </div>
     );
   }
@@ -192,7 +284,20 @@ const ExplorePlaces: React.FC<ExplorePlacesProps> = ({ userLocation, onRestauran
           <i className="fa-solid fa-map text-orange-500"></i>
           Explore Ahmedabad Food
         </h2>
-        <p className="text-gray-600">Discover amazing food destinations across the city</p>
+        <p className="text-gray-600 mb-4">Discover amazing food destinations across the city</p>
+        <div className="flex items-center justify-center gap-4">
+          <button
+            onClick={loadExplorePlaces}
+            disabled={loading}
+            className="bg-gradient-to-r from-green-500 to-blue-500 text-white px-4 py-2 rounded-full font-bold text-sm hover:shadow-lg transition-all disabled:opacity-50 flex items-center gap-2"
+          >
+            <i className="fa-solid fa-refresh"></i>
+            {loading ? 'Loading...' : 'Refresh Data'}
+          </button>
+          <div className="text-xs text-gray-500">
+            <span className="font-bold text-purple-600">{explorePlaces.length}</span> places found
+          </div>
+        </div>
       </div>
 
       <div className="flex flex-col gap-4 md:flex-row md:items-center md:justify-between">
@@ -264,9 +369,26 @@ const ExplorePlaces: React.FC<ExplorePlacesProps> = ({ userLocation, onRestauran
                 <div className="p-4">
                   <div className="flex justify-between items-start mb-2">
                     <h3 className="font-black text-gray-900 text-sm line-clamp-2">{place.name}</h3>
-                    <span className="bg-yellow-100 text-yellow-700 px-2 py-1 rounded-lg text-xs font-bold">
-                      ⭐ {place.rating.toFixed(1)}
-                    </span>
+                    <div className="flex flex-col gap-1">
+                      <span className="bg-yellow-100 text-yellow-700 px-2 py-1 rounded-lg text-xs font-bold">
+                        ⭐ {place.rating.toFixed(1)}
+                      </span>
+                      <div className="flex gap-1">
+                        <span className={`px-1 py-0.5 rounded text-[8px] font-bold ${
+                          place.type === 'restaurant' ? 'bg-blue-100 text-blue-800' :
+                          place.type === 'food' ? 'bg-green-100 text-green-800' :
+                          'bg-orange-100 text-orange-800'
+                        }`}>
+                          {place.type[0].toUpperCase()}
+                        </span>
+                        <span className={`px-1 py-0.5 rounded text-[8px] font-bold ${
+                          place.source === 'database' ? 'bg-purple-100 text-purple-800' :
+                          'bg-pink-100 text-pink-800'
+                        }`}>
+                          {place.source === 'user_suggestion' ? 'U' : 'V'}
+                        </span>
+                      </div>
+                    </div>
                   </div>
 
                   <p className="text-xs text-gray-600 mb-3 line-clamp-2">{place.description}</p>
@@ -324,7 +446,10 @@ const ExplorePlaces: React.FC<ExplorePlacesProps> = ({ userLocation, onRestauran
       <div className="bg-blue-50 rounded-xl p-4 border-2 border-blue-200">
         <p className="text-sm text-blue-900 font-semibold">
           <i className="fa-solid fa-lightbulb mr-2"></i>
-          💡 Tip: Click on any place to see it on the map and get directions to explore Ahmedabad's food scene!
+          💡 Tip: Click on any place to see it on the map and get directions! 
+          <span className="block mt-1 text-xs text-blue-700">
+            Places are dynamically loaded from our database - restaurants, food items, and user suggestions.
+          </span>
         </p>
       </div>
     </div>

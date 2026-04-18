@@ -22,6 +22,7 @@ import Collections from './components/Collections.tsx';
 import Localities from './components/Localities.tsx';
 import AdminDashboard from './components/AdminDashboard.tsx';
 import AdminDashboardComplete from './components/AdminDashboardComplete.tsx';
+import AdminLoginPage from './components/AdminLoginPage.tsx';
 import PartnerDashboard from './components/PartnerDashboard.tsx';
 import RestaurantDashboardComplete from './components/RestaurantDashboardComplete.tsx';
 import DeliveryDashboard from './components/DeliveryDashboard.tsx';
@@ -196,6 +197,11 @@ const App = () => {
   };
 
   useEffect(() => {
+    if (window.location.pathname === '/adminLogin' || window.location.pathname === '/admin-login') {
+      setCurrentView('admin_login' as any);
+      window.history.replaceState(null, '', '/');
+    }
+
     const init = async () => {
       await db.init();
       const storedUser = authService.getCurrentUser() || db.getCurrentUser();
@@ -504,7 +510,7 @@ const App = () => {
         />
       )}
       {currentView === 'admin' && currentUser?.role === 'admin' ? (
-        <AdminDashboardComplete currentUser={currentUser} onLogout={handleLogout} onViewChange={handleViewChange} />
+        <AdminDashboardComplete />
       ) : currentView === 'partner' && currentUser?.role === 'restaurant' ? (
         <RestaurantDashboardComplete currentUser={currentUser} onLogout={handleLogout} onViewChange={handleViewChange} />
       ) : currentView === 'delivery' && currentUser?.role === 'delivery' ? (
@@ -812,6 +818,18 @@ const App = () => {
                   else if (normalized?.role === 'delivery') setCurrentView('delivery');
                   else setCurrentView('home');
                 }} onGoBack={() => setCurrentView('home')} onViewChange={handleViewChange} />
+              )}
+
+              {currentView === 'admin_login' && (
+                <AdminLoginPage 
+                  onLoginSuccess={(u) => {
+                    const normalized = normalizeUser(u);
+                    setCurrentUser(normalized);
+                    if (normalized?.role === 'admin') setCurrentView('admin');
+                  }} 
+                  onGoBack={() => setCurrentView('home')} 
+                  onViewChange={handleViewChange} 
+                />
               )}
 
               {currentView === 'register' && (

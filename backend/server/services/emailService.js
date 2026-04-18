@@ -34,15 +34,15 @@ const getEtherealTransporter = async() => {
 
 // Get Gmail transporter
 const getGmailTransporter = () => {
-    if (!process.env.GMAIL_USER || !process.env.GMAIL_APP_PASSWORD) {
+    if (!process.env.EMAIL_USER || !process.env.EMAIL_PASS) {
         return null;
     }
 
     return nodemailer.createTransport({
         service: 'gmail',
         auth: {
-            user: process.env.GMAIL_USER,
-            pass: process.env.GMAIL_APP_PASSWORD
+            user: process.env.EMAIL_USER,
+            pass: process.env.EMAIL_PASS
         }
     });
 };
@@ -55,7 +55,7 @@ export const sendEmailOTP = async(email, otp, name = 'User') => {
         // Try Gmail first
         transporter = getGmailTransporter();
         if (transporter) {
-            senderEmail = process.env.GMAIL_USER;
+            senderEmail = process.env.EMAIL_USER;
             console.log('📧 Using Gmail for OTP email');
         } else {
             // Fall back to Ethereal (free, no setup)
@@ -119,7 +119,7 @@ export const sendEmailOTP = async(email, otp, name = 'User') => {
         console.log(`✅ OTP email sent to: ${email}`);
 
         // If using Ethereal, log preview URL
-        if (!process.env.GMAIL_USER && etherealTestAccount) {
+        if (!process.env.EMAIL_USER && etherealTestAccount) {
             const previewUrl = nodemailer.getTestMessageUrl(info);
             if (previewUrl) {
                 console.log(`\n📧 Email Preview URL: ${previewUrl}\n`);
@@ -141,7 +141,7 @@ export const sendEmailOTP = async(email, otp, name = 'User') => {
  */
 export const sendPlainEmailOTP = async(email, otp) => {
     try {
-        if (!process.env.GMAIL_USER || !process.env.GMAIL_APP_PASSWORD) {
+        if (!process.env.EMAIL_USER || !process.env.EMAIL_PASS) {
             console.log('⚠️  Email service not configured');
             return { success: false };
         }
@@ -149,7 +149,7 @@ export const sendPlainEmailOTP = async(email, otp) => {
         const transporter = createTransporter();
 
         await transporter.sendMail({
-            from: process.env.GMAIL_USER,
+            from: process.env.EMAIL_USER,
             to: email,
             subject: 'Your FlavourFinder OTP',
             text: `Your OTP is: ${otp}\n\nThis OTP will expire in 5 minutes.`
@@ -172,7 +172,7 @@ export const sendWelcomeEmail = async(email, name = 'User') => {
 
         transporter = getGmailTransporter();
         if (transporter) {
-            senderEmail = process.env.GMAIL_USER;
+            senderEmail = process.env.EMAIL_USER;
         } else {
             transporter = await getEtherealTransporter();
             if (transporter && etherealTestAccount) {
@@ -244,7 +244,7 @@ export const sendOrderConfirmationEmail = async(email, name = 'User', orderDetai
 
         transporter = getGmailTransporter();
         if (transporter) {
-            senderEmail = process.env.GMAIL_USER;
+            senderEmail = process.env.EMAIL_USER;
         } else {
             transporter = await getEtherealTransporter();
             if (transporter && etherealTestAccount) {
@@ -311,7 +311,7 @@ export const sendPasswordResetEmail = async(email, otp, name = 'User') => {
 
         transporter = getGmailTransporter();
         if (transporter) {
-            senderEmail = process.env.GMAIL_USER;
+            senderEmail = process.env.EMAIL_USER;
         } else {
             transporter = await getEtherealTransporter();
             if (transporter && etherealTestAccount) {

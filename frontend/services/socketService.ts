@@ -1,10 +1,17 @@
 import { io } from 'socket.io-client';
 import { SOCKET_URL } from './runtimeConfig';
+import { authService } from './authService';
 
-const socket = io(SOCKET_URL);
+const socket = io(SOCKET_URL, {
+  autoConnect: false,
+  auth: {
+    token: authService.getToken() || undefined
+  }
+});
 
 export const socketService = {
   connect: () => {
+    socket.auth = { token: authService.getToken() || undefined };
     socket.connect();
   },
 

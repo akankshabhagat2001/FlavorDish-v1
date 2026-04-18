@@ -8,6 +8,7 @@ export const foodService = {
     minPrice?: number;
     maxPrice?: number;
     restaurant?: string;
+    showUnavailable?: boolean;
     sortBy?: string;
     page?: number;
     limit?: number;
@@ -62,17 +63,17 @@ export const foodService = {
   },
 
   getCategories: async () => {
-    const response = await api.get('/food/categories');
+    const response = await api.get('/food/categories/all');
     return response.data;
   },
 
   getCuisines: async () => {
-    const response = await api.get('/food/cuisines');
+    const response = await api.get('/restaurants/cuisines/all');
     return response.data;
   },
 
   getPopularFoods: async () => {
-    const response = await api.get('/food/popular');
-    return response.data;
+    const response = await api.get('/food', { params: { sortBy: 'rating', sortOrder: 'desc', limit: 20 } });
+    return response.data?.foods || [];
   }
 };

@@ -2,11 +2,15 @@ import express from 'express';
 import mongoose from 'mongoose';
 import cors from 'cors';
 import dotenv from 'dotenv';
+import helmet from 'helmet';
+import rateLimit from 'express-rate-limit';
+import jwt from 'jsonwebtoken';
 import { createServer } from 'http';
 import { Server } from 'socket.io';
 
 // Import routes
 import authRoutes from './routes/auth.js';
+import { ensureDefaultAdmin } from './controllers/authController.js';
 import userRoutes from './routes/users.js';
 import restaurantRoutes from './routes/restaurants.js';
 import foodRoutes from './routes/food.js';
@@ -14,13 +18,22 @@ import orderRoutes from './routes/orders.js';
 import bookingRoutes from './routes/bookings.js';
 import suggestionRoutes from './routes/suggestions.js';
 import adminRoutes from './routes/admin.js';
+import adminRoutesNew from './routes/adminRoutes.js';
 import paymentRoutes from './routes/payments.js';
 import reviewRoutes from './routes/reviews.js';
 import chatRoutes from './routes/chat.js';
 import formRoutes from './routes/forms.js';
 import activityRoutes from './routes/activity.js';
+import customerRoutes from './routes/customers.js';
+import notificationRoutes from './routes/notifications.js';
+import searchRoutes from './routes/search.js';
+import uploadRoutes from './routes/upload.js';
+import aiRoutes from './routes/ai.js';
+import cartRoutes from './routes/cart.js';
+import deliveryRoutes from './routes/deliveryRoutes.js';
 import { ChatConversation, ChatMessage } from './models/Chat.js';
 import Order from './models/Order.js';
+import { connectDB, closeDB } from './config/db.js';
 
 dotenv.config();
 
@@ -35,7 +48,6 @@ const requireEnv = (key) => {
 const NODE_ENV = process.env.NODE_ENV || 'development';
 const isProduction = NODE_ENV === 'production';
 const JWT_SECRET = requireEnv('JWT_SECRET');
-const MONGODB_URI = requireEnv('MONGODB_URI');
 const FRONTEND_URL = process.env.FRONTEND_URL;
 
 if (isProduction && !FRONTEND_URL) {
@@ -44,9 +56,15 @@ if (isProduction && !FRONTEND_URL) {
 
 const app = express();
 const server = createServer(app);
-const allowedOrigins = isProduction ?
-    [FRONTEND_URL] :
-    ['http://localhost:3000', 'http://localhost:3001', 'http://127.0.0.1:3000', 'http://127.0.0.1:3001', ...(FRONTEND_URL ? [FRONTEND_URL] : [])];
+const allowedOrigins = isProduction ? [FRONTEND_URL] : [
+    'http://localhost:3000',
+    'http://localhost:3001',
+    'http://127.0.0.1:3000',
+    'http://127.0.0.1:3001',
+    'http://192.168.111.245:3000',
+    'http://192.168.111.245:3001',
+    ...(FRONTEND_URL ? [FRONTEND_URL] : [])
+];
 const corsOptions = {
     origin: (origin, callback) => {
         if (!origin || allowedOrigins.includes(origin)) {
@@ -65,6 +83,13 @@ const io = new Server(server, {
 
 // Middleware
 app.use(cors(corsOptions));
+app.use(helmet());
+app.use(rateLimit({
+    windowMs: 15 * 60 * 1000,
+    max: 1000,
+    standardHeaders: true,
+    legacyHeaders: false
+}));
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 
@@ -78,10 +103,18 @@ app.use('/api/bookings', bookingRoutes);
 app.use('/api/suggestions', suggestionRoutes);
 app.use('/api/payments', paymentRoutes);
 app.use('/api/admin', adminRoutes);
+app.use('/api/admin', adminRoutesNew); // Extended admin routes
 app.use('/api/reviews', reviewRoutes);
 app.use('/api/chat', chatRoutes);
 app.use('/api/forms', formRoutes);
 app.use('/api/activity', activityRoutes);
+app.use('/api/customers', customerRoutes);
+app.use('/api/notifications', notificationRoutes);
+app.use('/api/search', searchRoutes);
+app.use('/api/upload', uploadRoutes);
+app.use('/api/ai', aiRoutes);
+app.use('/api/cart', cartRoutes);
+app.use('/api/deliveries', deliveryRoutes);
 
 // Test route
 app.get('/api/test', (req, res) => {
@@ -122,7 +155,16 @@ io.on('connection', (socket) => {
     console.log('User connected:', socket.id);
 
     // Register user socket
-    const userId = socket.handshake.query.userId;
+    let userId = socket.handshake.query.userId;
+    const authToken = socket.handshake.auth?.token;
+    if (!userId && authToken) {
+        try {
+            const payload = jwt.verify(authToken, JWT_SECRET);
+            userId = payload.id || payload.userId;
+        } catch (e) {
+            console.warn('Invalid socket auth token');
+        }
+    }
     if (userId) {
         userSockets.set(userId, socket.id);
     }
@@ -217,7 +259,9 @@ io.on('connection', (socket) => {
                 await conversation.save();
             }
 
-            io.to(`chat-${conversationId}`).emit('messages-read', { userRole });
+            if (conversation?.orderId) {
+                io.to(`chat-${conversation.orderId}`).emit('messages-read', { userRole });
+            }
         } catch (error) {
             console.error('Mark read error:', error);
         }
@@ -366,8 +410,13 @@ function getNotificationMessage(status, orderId) {
 
 // Global error handler
 app.use((err, req, res, next) => {
-    console.error(err.stack);
-    res.status(500).json({ message: 'Something went wrong!' });
+    console.error(err.stack || err);
+    if (err.name === 'ValidationError') {
+        return res.status(400).json({ message: err.message });
+    }
+    return res.status(err.statusCode || 500).json({
+        message: err.message || 'Something went wrong!'
+    });
 });
 
 // Connect to MongoDB and start the server
@@ -391,14 +440,11 @@ server.on('error', (err) => {
 
 async function startServer() {
     try {
-        await mongoose.connect(MONGODB_URI, {
-            retryWrites: true,
-            w: 'majority'
-        });
-
-        console.log('✅ MongoDB connected successfully');
-        console.log(`Database: ${MONGODB_URI.split('/').pop()}`);
+        await connectDB();
         console.log(`🔐 JWT secret loaded: ${Boolean(JWT_SECRET)}`);
+
+        // Ensure default admin exists
+        await ensureDefaultAdmin();
 
         server.listen(currentPort, '0.0.0.0', () => {
             console.log(`🚀 Server running on http://localhost:${currentPort}`);
@@ -427,7 +473,7 @@ startServer();
 
 async function closeMongoConnection() {
     try {
-        await mongoose.connection.close();
+        await closeDB();
         console.log('MongoDB connection closed');
     } catch (closeError) {
         console.error('Error closing MongoDB connection:', closeError);

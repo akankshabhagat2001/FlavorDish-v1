@@ -4,7 +4,8 @@ import Order from '../models/Order.js';
 import Food from '../models/Food.js';
 import Restaurant from '../models/Restaurant.js';
 import User from '../models/User.js';
-import { authenticate, authorize } from '../middleware/auth.js';
+import { authMiddleware as authenticate } from '../middleware/authMiddleware.js';
+import { authorizeRoles as authorize } from '../middleware/roleMiddleware.js';;
 import { io } from '../server.js';
 import { logActivity } from './activity.js';
 
@@ -437,6 +438,438 @@ router.get('/delivery/orders', authenticate, authorize('delivery_partner'), asyn
         });
     } catch (error) {
         console.error('Get delivery orders error:', error);
+        res.status(500).json({ message: 'Server error.' });
+    }
+});
+
+// Accept delivery order (Delivery Partner)
+router.put('/:id/accept-delivery', authenticate, authorize('delivery_partner'), async(req, res) => {
+    try {
+        const order = await Order.findById(req.params.id);
+        if (!order) {
+            return res.status(404).json({ message: 'Order not found.' });
+        }
+
+        if (order.deliveryPartner.toString() !== req.user._id.toString()) {
+            return res.status(403).json({ message: 'Access denied.' });
+        }
+
+        if (order.status !== 'confirmed') {
+            return res.status(400).json({ message: 'Order is not available for acceptance.' });
+        }
+
+        order.status = 'picked_up';
+        order.deliveryAcceptedAt = new Date();
+        await order.save();
+
+        await order.populate('customer', 'name phone');
+        await order.populate('restaurant', 'name phone address');
+
+        // Emit socket event
+        io.to(`order-${order._id}`).emit('delivery-accepted', order);
+
+        await logActivity(req.user._id, req.user.role, 'DELIVERY_ACCEPTED', { orderId: order._id }, req);
+
+        res.json({
+            message: 'Order accepted for delivery.',
+            order
+        });
+    } catch (error) {
+        console.error('Accept delivery error:', error);
+        res.status(500).json({ message: 'Server error.' });
+    }
+});
+
+// Reject delivery order (Delivery Partner)
+router.put('/:id/reject-delivery', authenticate, authorize('delivery_partner'), [
+    body('reason').trim().notEmpty().withMessage('Rejection reason is required')
+], async(req, res) => {
+    try {
+        const errors = validationResult(req);
+        if (!errors.isEmpty()) {
+            return res.status(400).json({ errors: errors.array() });
+        }
+
+        const order = await Order.findById(req.params.id);
+        if (!order) {
+            return res.status(404).json({ message: 'Order not found.' });
+        }
+
+        if (order.deliveryPartner.toString() !== req.user._id.toString()) {
+            return res.status(403).json({ message: 'Access denied.' });
+        }
+
+        if (order.status !== 'confirmed') {
+            return res.status(400).json({ message: 'Order is not available for rejection.' });
+        }
+
+        const { reason } = req.body;
+
+        order.status = 'confirmed';
+        order.deliveryPartner = null;
+        order.deliveryRejectedAt = new Date();
+        order.deliveryRejectionReason = reason;
+        await order.save();
+
+        await order.populate('customer', 'name phone');
+        await order.populate('restaurant', 'name phone address');
+
+        // Emit socket event
+        io.to(`order-${order._id}`).emit('delivery-rejected', order);
+
+        await logActivity(req.user._id, req.user.role, 'DELIVERY_REJECTED', { orderId: order._id, reason }, req);
+
+        res.json({
+            message: 'Order rejected for delivery.',
+            order
+        });
+    } catch (error) {
+        console.error('Reject delivery error:', error);
+        res.status(500).json({ message: 'Server error.' });
+    }
+});
+
+// Update delivery location (Delivery Partner)
+router.put('/:id/location', authenticate, authorize('delivery_partner'), [
+    body('latitude').isFloat({ min: -90, max: 90 }).withMessage('Valid latitude required'),
+    body('longitude').isFloat({ min: -180, max: 180 }).withMessage('Valid longitude required')
+], async(req, res) => {
+    try {
+        const errors = validationResult(req);
+        if (!errors.isEmpty()) {
+            return res.status(400).json({ errors: errors.array() });
+        }
+
+        const order = await Order.findById(req.params.id);
+        if (!order) {
+            return res.status(404).json({ message: 'Order not found.' });
+        }
+
+        if (order.deliveryPartner.toString() !== req.user._id.toString()) {
+            return res.status(403).json({ message: 'Access denied.' });
+        }
+
+        if (!['picked_up', 'out_for_delivery'].includes(order.status)) {
+            return res.status(400).json({ message: 'Order is not in delivery.' });
+        }
+
+        const { latitude, longitude } = req.body;
+
+        order.deliveryLocation = {
+            latitude,
+            longitude,
+            updatedAt: new Date()
+        };
+
+        await order.save();
+
+        // Emit socket event for real-time tracking
+        io.to(`order-${order._id}`).emit('delivery-location-update', {
+            orderId: order._id,
+            location: order.deliveryLocation
+        });
+
+        res.json({
+            message: 'Delivery location updated.',
+            location: order.deliveryLocation
+        });
+    } catch (error) {
+        console.error('Update delivery location error:', error);
+        res.status(500).json({ message: 'Server error.' });
+    }
+});
+
+// Mark order as out for delivery (Delivery Partner)
+router.put('/:id/out-for-delivery', authenticate, authorize('delivery_partner'), async(req, res) => {
+    try {
+        const order = await Order.findById(req.params.id);
+        if (!order) {
+            return res.status(404).json({ message: 'Order not found.' });
+        }
+
+        if (order.deliveryPartner.toString() !== req.user._id.toString()) {
+            return res.status(403).json({ message: 'Access denied.' });
+        }
+
+        if (order.status !== 'picked_up') {
+            return res.status(400).json({ message: 'Order must be picked up first.' });
+        }
+
+        order.status = 'out_for_delivery';
+        order.outForDeliveryAt = new Date();
+        await order.save();
+
+        await order.populate('customer', 'name phone');
+        await order.populate('restaurant', 'name phone address');
+
+        // Emit socket event
+        io.to(`order-${order._id}`).emit('out-for-delivery', order);
+
+        await logActivity(req.user._id, req.user.role, 'OUT_FOR_DELIVERY', { orderId: order._id }, req);
+
+        res.json({
+            message: 'Order marked as out for delivery.',
+            order
+        });
+    } catch (error) {
+        console.error('Out for delivery error:', error);
+        res.status(500).json({ message: 'Server error.' });
+    }
+});
+
+// Mark order as delivered (Delivery Partner)
+router.put('/:id/deliver', authenticate, authorize('delivery_partner'), async(req, res) => {
+    try {
+        const order = await Order.findById(req.params.id);
+        if (!order) {
+            return res.status(404).json({ message: 'Order not found.' });
+        }
+
+        if (order.deliveryPartner.toString() !== req.user._id.toString()) {
+            return res.status(403).json({ message: 'Access denied.' });
+        }
+
+        if (order.status !== 'out_for_delivery') {
+            return res.status(400).json({ message: 'Order must be out for delivery.' });
+        }
+
+        order.status = 'delivered';
+        order.deliveredAt = new Date();
+        await order.save();
+
+        await order.populate('customer', 'name phone');
+        await order.populate('restaurant', 'name phone address');
+
+        // Emit socket event
+        io.to(`order-${order._id}`).emit('order-delivered', order);
+
+        await logActivity(req.user._id, req.user.role, 'ORDER_DELIVERED', { orderId: order._id }, req);
+
+        res.json({
+            message: 'Order delivered successfully.',
+            order
+        });
+    } catch (error) {
+        console.error('Deliver order error:', error);
+        res.status(500).json({ message: 'Server error.' });
+    }
+});
+
+// Get delivery partner earnings (Delivery Partner)
+router.get('/delivery/earnings', authenticate, authorize('delivery_partner'), async(req, res) => {
+    try {
+        const { period = 'month' } = req.query; // day, week, month, year
+
+        let startDate;
+        const now = new Date();
+
+        switch (period) {
+            case 'day':
+                startDate = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+                break;
+            case 'week':
+                startDate = new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000);
+                break;
+            case 'month':
+                startDate = new Date(now.getFullYear(), now.getMonth(), 1);
+                break;
+            case 'year':
+                startDate = new Date(now.getFullYear(), 0, 1);
+                break;
+            default:
+                startDate = new Date(now.getFullYear(), now.getMonth(), 1);
+        }
+
+        const deliveredOrders = await Order.find({
+            deliveryPartner: req.user._id,
+            status: 'delivered',
+            deliveredAt: { $gte: startDate }
+        });
+
+        const totalEarnings = deliveredOrders.reduce((sum, order) => sum + (order.deliveryFee || 0), 0);
+        const totalOrders = deliveredOrders.length;
+        const averageRating = deliveredOrders.length > 0 ?
+            deliveredOrders.reduce((sum, order) => sum + (order.ratings?.delivery || 0), 0) / deliveredOrders.length :
+            0;
+
+        // Get earnings breakdown by day
+        const earningsByDay = await Order.aggregate([{
+                $match: {
+                    deliveryPartner: req.user._id,
+                    status: 'delivered',
+                    deliveredAt: { $gte: startDate }
+                }
+            },
+            {
+                $group: {
+                    _id: {
+                        $dateToString: { format: '%Y-%m-%d', date: '$deliveredAt' }
+                    },
+                    earnings: { $sum: '$deliveryFee' },
+                    orders: { $sum: 1 }
+                }
+            },
+            {
+                $sort: { '_id': 1 }
+            }
+        ]);
+
+        res.json({
+            period,
+            totalEarnings,
+            totalOrders,
+            averageRating: Math.round(averageRating * 10) / 10,
+            earningsByDay,
+            startDate
+        });
+    } catch (error) {
+        console.error('Get delivery earnings error:', error);
+        res.status(500).json({ message: 'Server error.' });
+    }
+});
+
+// Get delivery partner statistics (Delivery Partner)
+router.get('/delivery/stats', authenticate, authorize('delivery_partner'), async(req, res) => {
+    try {
+        const now = new Date();
+        const startOfMonth = new Date(now.getFullYear(), now.getMonth(), 1);
+
+        const [
+            totalDelivered,
+            thisMonthDelivered,
+            averageRating,
+            totalEarnings
+        ] = await Promise.all([
+            Order.countDocuments({
+                deliveryPartner: req.user._id,
+                status: 'delivered'
+            }),
+            Order.countDocuments({
+                deliveryPartner: req.user._id,
+                status: 'delivered',
+                deliveredAt: { $gte: startOfMonth }
+            }),
+            Order.aggregate([{
+                    $match: {
+                        deliveryPartner: req.user._id,
+                        status: 'delivered',
+                        'ratings.delivery': { $exists: true }
+                    }
+                },
+                {
+                    $group: {
+                        _id: null,
+                        average: { $avg: '$ratings.delivery' }
+                    }
+                }
+            ]),
+            Order.aggregate([{
+                    $match: {
+                        deliveryPartner: req.user._id,
+                        status: 'delivered'
+                    }
+                },
+                {
+                    $group: {
+                        _id: null,
+                        total: { $sum: '$deliveryFee' }
+                    }
+                }
+            ])
+        ]);
+
+        const avgRating = averageRating.length > 0 ? Math.round(averageRating[0].average * 10) / 10 : 0;
+        const totalEarned = totalEarnings.length > 0 ? totalEarnings[0].total : 0;
+
+        // Get current active deliveries
+        const activeDeliveries = await Order.countDocuments({
+            deliveryPartner: req.user._id,
+            status: { $in: ['picked_up', 'out_for_delivery'] }
+        });
+
+        res.json({
+            totalDelivered,
+            thisMonthDelivered,
+            averageRating: avgRating,
+            totalEarnings: totalEarned,
+            activeDeliveries
+        });
+    } catch (error) {
+        console.error('Get delivery stats error:', error);
+        res.status(500).json({ message: 'Server error.' });
+    }
+});
+
+// Get delivery partner availability (Delivery Partner)
+router.get('/delivery/availability', authenticate, authorize('delivery_partner'), async(req, res) => {
+    try {
+        const partner = await User.findById(req.user._id).select('isAvailable');
+        res.json({
+            isAvailable: partner.isAvailable
+        });
+    } catch (error) {
+        console.error('Get availability error:', error);
+        res.status(500).json({ message: 'Server error.' });
+    }
+});
+
+// Update delivery partner availability (Delivery Partner)
+router.put('/delivery/availability', authenticate, authorize('delivery_partner'), [
+    body('isAvailable').isBoolean().withMessage('isAvailable must be boolean')
+], async(req, res) => {
+    try {
+        const errors = validationResult(req);
+        if (!errors.isEmpty()) {
+            return res.status(400).json({ errors: errors.array() });
+        }
+
+        const { isAvailable } = req.body;
+
+        await User.findByIdAndUpdate(req.user._id, { isAvailable });
+
+        await logActivity(req.user._id, req.user.role, 'AVAILABILITY_UPDATE', { isAvailable }, req);
+
+        res.json({
+            message: 'Availability updated successfully.',
+            isAvailable
+        });
+    } catch (error) {
+        console.error('Update availability error:', error);
+        res.status(500).json({ message: 'Server error.' });
+    }
+});
+
+// Get delivery history (Delivery Partner)
+router.get('/delivery/history', authenticate, authorize('delivery_partner'), async(req, res) => {
+    try {
+        const { page = 1, limit = 20 } = req.query;
+
+        const orders = await Order.find({
+                deliveryPartner: req.user._id,
+                status: 'delivered'
+            })
+            .populate('customer', 'name phone')
+            .populate('restaurant', 'name phone address')
+            .sort({ deliveredAt: -1 })
+            .skip((parseInt(page) - 1) * parseInt(limit))
+            .limit(parseInt(limit));
+
+        const total = await Order.countDocuments({
+            deliveryPartner: req.user._id,
+            status: 'delivered'
+        });
+
+        res.json({
+            orders,
+            pagination: {
+                page: parseInt(page),
+                limit: parseInt(limit),
+                total,
+                pages: Math.ceil(total / parseInt(limit))
+            }
+        });
+    } catch (error) {
+        console.error('Get delivery history error:', error);
         res.status(500).json({ message: 'Server error.' });
     }
 });

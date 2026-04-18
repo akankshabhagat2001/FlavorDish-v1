@@ -1,455 +1,246 @@
-import React, { useState, useMemo } from 'react';
-import { User, Restaurant, Order } from '../types';
-import { adminService, restaurantService, userService } from '../services';
+import React, { useEffect, useMemo, useState } from 'react';
+import { useNavigate } from 'react-router-dom';
+import { adminService } from '../services/adminService';
+import { authService } from '../services';
 
-interface AdminDashboardCompleteProps {
-  currentUser: User;
-  onLogout: () => void;
-  onViewChange: (view: string) => void;
-}
+import AdminUsersPanel from './AdminUsersPanel';
+import AdminRestaurantsPanel from './AdminRestaurantsPanel';
+import AdminOrdersPanel from './AdminOrdersPanel';
+import AdminDeliveryAdvanced from './AdminDeliveryAdvanced';
+import AdminActivityLogsPanel from './AdminActivityLogsPanel';
+import AdminReviewsPanel from './AdminReviewsPanel';
+import AdminSubscriptionsPanel from './AdminSubscriptionsPanel';
 
-const AdminDashboardComplete: React.FC<AdminDashboardCompleteProps> = ({ 
-  currentUser, 
-  onLogout,
-  onViewChange 
-}) => {
-  const [activeTab, setActiveTab] = useState<'dashboard' | 'users' | 'restaurants' | 'orders' | 'analytics' | 'suggestions' | 'activity'>('dashboard');
-  const [users, setUsers] = useState<User[]>([]);
-  const [restaurants, setRestaurants] = useState<Restaurant[]>([]);
-  const [orders, setOrders] = useState<Order[]>([]);
-  const [suggestions, setSuggestions] = useState<any[]>([]);
-  const [activityLogs, setActivityLogs] = useState<any[]>([]);
+const statusStyle = (status: string) => {
+  const key = (status || '').toLowerCase();
+  if (key.includes('deliver')) return 'bg-emerald-100 text-emerald-700';
+  if (key.includes('cancel')) return 'bg-rose-100 text-rose-700';
+  if (key.includes('place') || key.includes('pending')) return 'bg-amber-100 text-amber-700';
+  return 'bg-indigo-100 text-indigo-700';
+};
+
+const AdminDashboardComplete: React.FC = () => {
+  const navigate = useNavigate();
   const [loading, setLoading] = useState(true);
-
-  const normalizeOrder = (raw: any): Order => ({
-    _id: raw?._id || '',
-    userId: raw?.customer?._id || raw?.userId || '',
-    restaurantId: raw?.restaurant?._id || raw?.restaurantId || '',
-    restaurantName: raw?.restaurant?.name || raw?.restaurantName || '',
-    items: raw?.items || [],
-    totalAmount: raw?.total || raw?.totalAmount || 0,
-    orderStatus: raw?.status || raw?.orderStatus || 'placed',
-    status: raw?.status || raw?.orderStatus || 'placed',
-    createdAt: raw?.createdAt ? new Date(raw.createdAt).getTime() : Date.now(),
-    paymentStatus: raw?.paymentStatus,
+  const [stats, setStats] = useState<any>(null);
+  const [orders, setOrders] = useState<any[]>([]);
+  const [usersByRole, setUsersByRole] = useState<Record<string, number>>({
+    customer: 0,
+    restaurant_owner: 0,
+    delivery_partner: 0,
+    admin: 0
   });
 
-  const normalizeUser = (raw: any): User => ({
-    _id: raw?._id || raw?.id || '',
-    name: raw?.name || 'User',
-    email: raw?.email || '',
-    role: raw?.role === 'restaurant_owner' ? 'restaurant' : raw?.role === 'delivery_partner' ? 'delivery' : (raw?.role || 'customer'),
-    createdAt: raw?.createdAt ? new Date(raw.createdAt).getTime() : Date.now(),
-    phone: raw?.phone,
-  });
+  const [activeTab, setActiveTab] = useState('Dashboard');
 
-  const normalizeRestaurant = (raw: any): Restaurant => ({
-    _id: raw?._id || '',
-    ownerId: raw?.ownerId || raw?.owner?._id || raw?.owner || '',
-    name: raw?.name || 'Restaurant',
-    description: raw?.description || '',
-    cuisine: Array.isArray(raw?.cuisine) ? raw.cuisine : [],
-    location: {
-      address: raw?.address?.street ? `${raw.address.street}, ${raw.address.city || ''}` : (raw?.location?.address || ''),
-      latitude: raw?.address?.coordinates?.latitude || raw?.location?.latitude || 23.0225,
-      longitude: raw?.address?.coordinates?.longitude || raw?.location?.longitude || 72.5714,
-    },
-    rating: raw?.rating || 0,
-    isOpen: raw?.isOpen ?? true,
-    imageUrl: raw?.imageUrl || raw?.image || raw?.images?.[0]?.url || '',
-    deliveryTime: raw?.deliveryTime || '30 min',
-    costForTwo: raw?.costForTwo || 0,
-    createdAt: raw?.createdAt ? new Date(raw.createdAt).getTime() : Date.now(),
-  });
-
-  React.useEffect(() => {
-    const loadData = async () => {
+  useEffect(() => {
+    const load = async () => {
       setLoading(true);
       try {
-        const [usersData, restaurantsData, ordersData, suggestionsData, activityData] = await Promise.all([
-          userService.getUsers({ page: 1, limit: 200 }),
-          restaurantService.getRestaurants({ page: 1, limit: 200 }),
-          adminService.getOrders({ page: 1, limit: 200 }),
-          adminService.getSuggestions('pending'),
-          adminService.getActivityLogs({ page: 1, limit: 50 })
+        const [statsRes, ordersRes] = await Promise.all([
+          adminService.getStats(),
+          adminService.getOrders({ page: 1, limit: 6 })
         ]);
-        setUsers((usersData?.users || []).map(normalizeUser).map(u => ({ ...u, isActive: usersData.users.find((ru: any)=>ru._id === u._id)?.isActive ?? true })));
-        setRestaurants((restaurantsData?.restaurants || []).map(normalizeRestaurant));
-        setOrders((ordersData?.orders || []).map(normalizeOrder));
-        setSuggestions(suggestionsData?.suggestions || []);
-        setActivityLogs(activityData?.logs || []);
-      } catch (err) {
-        console.error('Error loading data:', err);
+
+        const incomingStats = statsRes?.stats || statsRes || {};
+        const incomingOrders = ordersRes?.orders || ordersRes?.data || [];
+        const userStatsArr = incomingStats.userStats || [];
+
+        const rolesMap = userStatsArr.reduce((acc: any, curr: any) => {
+          acc[curr._id] = curr.count;
+          return acc;
+        }, {});
+
+        setStats(incomingStats);
+        setOrders(Array.isArray(incomingOrders) ? incomingOrders : []);
+        setUsersByRole({
+          customer: rolesMap['customer'] || 0,
+          restaurant_owner: rolesMap['restaurant'] || rolesMap['restaurant_owner'] || 0,
+          delivery_partner: rolesMap['delivery'] || rolesMap['delivery_partner'] || 0,
+          admin: rolesMap['admin'] || 0
+        });
+      } catch (err: any) {
+        console.error('Failed to load dashboard data:', err);
+        setStats({
+          totalUsers: 0,
+          totalOrders: 0,
+          totalRestaurants: 0,
+          totalRevenue: 0
+        });
+        setOrders([]);
+        setUsersByRole({ customer: 0, restaurant_owner: 0, delivery_partner: 0, admin: 0 });
       } finally {
         setLoading(false);
       }
     };
-    
-    loadData();
+    load();
   }, []);
 
-  const stats = useMemo(() => ({
-    totalUsers: users.length,
-    totalRestaurants: restaurants.length,
-    totalOrders: orders.length,
-    totalRevenue: orders.reduce((sum, o) => sum + (o.totalAmount || 0), 0),
-    avgOrderValue: orders.length > 0 ? Math.round(orders.reduce((sum, o) => sum + (o.totalAmount || 0), 0) / orders.length) : 0,
-    activeRestaurants: restaurants.filter(r => r.isOpen).length,
-  }), [users, restaurants, orders]);
+  const revenueText = useMemo(() => {
+    const value = Number(stats?.totalRevenue || 0);
+    if (value >= 100000) return `${(value / 100000).toFixed(1)}L`;
+    if (value >= 1000) return `${(value / 1000).toFixed(1)}K`;
+    return `${value}`;
+  }, [stats]);
 
-  const handleRoleChange = async (userId: string, targetRole: string) => {
-    try {
-      await adminService.updateUserRole(userId, targetRole);
-      setUsers(prev => prev.map(u => u._id === userId ? { ...u, role: targetRole as any } : u));
-    } catch (e) {
-      alert("Failed to update user role");
-    }
+  const handleLogout = () => {
+    authService.logout();
+    navigate('/admin-login');
   };
 
-  const handleStatusChange = async (userId: string, isActive: boolean) => {
-    try {
-      await adminService.updateUserStatus(userId, isActive);
-      setUsers(prev => prev.map(u => u._id === userId ? { ...u, isActive } : u));
-    } catch (e) {
-      alert("Failed to change user status");
-    }
-  };
-
-  const handleSuggestion = async (suggestionId: string, status: string) => {
-    try {
-      await adminService.updateSuggestionStatus(suggestionId, status);
-      setSuggestions(prev => prev.filter(s => s._id !== suggestionId));
-    } catch (e) {
-      alert("Failed to update suggestion");
-    }
-  };
+  const weeklyBars = [62, 74, 45, 86, 97, 104, 68];
+  const weekLabels = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
+  const maxBar = Math.max(...weeklyBars);
 
   return (
-    <div className="min-h-screen bg-gray-50">
-      {/* Header */}
-      <div className="bg-white border-b border-gray-200 sticky top-0 z-40">
-        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-4 flex justify-between items-center">
-          <div>
-            <h1 className="text-3xl font-black text-gray-900 italic">flavorfinder</h1>
-            <p className="text-sm text-gray-500 font-semibold">Admin Control Center</p>
+    <div className="min-h-screen bg-[#0F1012] text-white p-2">
+      <div className="mx-auto flex max-w-[1350px] gap-3">
+        <aside className="w-[330px] rounded-2xl bg-[#161033] border border-violet-900/60 p-5 flex flex-col">
+          <h1 className="text-4xl font-black italic text-violet-400 tracking-tight">flavorfinder</h1>
+          <p className="text-[10px] uppercase tracking-[5px] text-violet-300/70 mt-1">Admin Console</p>
+
+          <div className="mt-8 space-y-2">
+            <p className="text-[11px] uppercase tracking-[4px] text-slate-400">Overview</p>
+            <button onClick={() => setActiveTab('Dashboard')} className={`w-full text-left rounded-xl px-4 py-3 ${activeTab === 'Dashboard' ? 'bg-violet-700/70 font-bold' : 'hover:bg-white/5'}`}>Dashboard</button>
           </div>
-          <div className="flex items-center gap-6">
-            <div className="text-right">
-              <p className="text-sm font-bold text-gray-900">{currentUser.name}</p>
-              <p className="text-xs text-gray-500 uppercase tracking-wider">Administrator</p>
-            </div>
-            <button 
-              onClick={onLogout}
-              className="bg-red-600 hover:bg-red-700 text-white px-6 py-2 rounded-lg font-bold text-sm transition-all"
-            >
-              Logout
+
+          <div className="mt-8 space-y-2">
+            <p className="text-[11px] uppercase tracking-[4px] text-slate-400">Management</p>
+            <button onClick={() => setActiveTab('Users')} className={`w-full text-left px-4 py-3 rounded-xl ${activeTab === 'Users' ? 'bg-violet-700/70 font-bold' : 'hover:bg-white/5'}`}>Users</button>
+            <button onClick={() => setActiveTab('Restaurants')} className={`w-full text-left px-4 py-3 rounded-xl ${activeTab === 'Restaurants' ? 'bg-violet-700/70 font-bold' : 'hover:bg-white/5'}`}>Restaurants</button>
+            <button onClick={() => setActiveTab('Orders')} className={`w-full text-left px-4 py-3 rounded-xl ${activeTab === 'Orders' ? 'bg-violet-700/70 font-bold' : 'hover:bg-white/5'}`}>Orders</button>
+            <button onClick={() => setActiveTab('Delivery')} className={`w-full text-left px-4 py-3 rounded-xl ${activeTab === 'Delivery' ? 'bg-violet-700/70 font-bold' : 'hover:bg-white/5'}`}>Delivery</button>
+          </div>
+
+          <div className="mt-8 space-y-2">
+            <p className="text-[11px] uppercase tracking-[4px] text-slate-400">System</p>
+            <button onClick={() => setActiveTab('Activity Logs')} className={`w-full text-left px-4 py-3 rounded-xl ${activeTab === 'Activity Logs' ? 'bg-violet-700/70 font-bold' : 'hover:bg-white/5'}`}>Activity Logs</button>
+            <button onClick={() => setActiveTab('Reviews')} className={`w-full text-left px-4 py-3 rounded-xl ${activeTab === 'Reviews' ? 'bg-violet-700/70 font-bold' : 'hover:bg-white/5'}`}>Reviews</button>
+            <button onClick={() => setActiveTab('Subscriptions')} className={`w-full text-left px-4 py-3 rounded-xl ${activeTab === 'Subscriptions' ? 'bg-violet-700/70 font-bold' : 'hover:bg-white/5'}`}>Subscriptions</button>
+          </div>
+
+          <div className="mt-auto pt-5 border-t border-white/10">
+            <button onClick={handleLogout} className="w-full rounded-xl bg-rose-600/90 py-3 font-black hover:bg-rose-500 transition">
+              Logout Admin
             </button>
           </div>
-        </div>
-      </div>
+        </aside>
 
-      {/* Navigation Tabs */}
-      <div className="bg-white border-b border-gray-200 sticky top-16 z-30">
-        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
-          <div className="flex gap-8">
-            {[
-              { id: 'dashboard', label: '📊 Dashboard', icon: 'fa-chart-line' },
-              { id: 'users', label: '👥 Users', icon: 'fa-users' },
-              { id: 'restaurants', label: '🍽️ Restaurants', icon: 'fa-store' },
-              { id: 'orders', label: '📦 Orders', icon: 'fa-box' },
-              { id: 'suggestions', label: '📝 Suggestions', icon: 'fa-lightbulb' },
-              { id: 'activity', label: '👁️ Activity Logs', icon: 'fa-list' },
-              { id: 'analytics', label: '📈 Analytics', icon: 'fa-chart-bar' }
-            ].map((tab) => (
-              <button
-                key={tab.id}
-                onClick={() => setActiveTab(tab.id as any)}
-                className={`py-4 px-2 border-b-2 font-bold text-sm transition-all whitespace-nowrap ${
-                  activeTab === tab.id
-                    ? 'border-blue-600 text-blue-600'
-                    : 'border-transparent text-gray-600 hover:text-gray-900'
-                }`}
-              >
-                {tab.label}
-              </button>
-            ))}
-          </div>
-        </div>
-      </div>
-
-      <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-12">
-        {/* Dashboard Tab */}
-        {activeTab === 'dashboard' && (
-          <div className="space-y-8">
-            {/* Key Metrics */}
-            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-              {[
-                { label: 'Total Users', value: stats.totalUsers, icon: '👥', color: 'blue' },
-                { label: 'Total Restaurants', value: stats.totalRestaurants, icon: '🍽️', color: 'green' },
-                { label: 'Active Orders', value: stats.totalOrders, icon: '📦', color: 'orange' },
-                { label: 'Total Revenue', value: `₹${stats.totalRevenue.toLocaleString()}`, icon: '💰', color: 'purple' },
-                { label: 'Avg Order Value', value: `₹${stats.avgOrderValue}`, icon: '📊', color: 'pink' },
-                { label: 'Open Restaurants', value: stats.activeRestaurants, icon: '🟢', color: 'cyan' }
-              ].map((metric, i) => (
-                <div key={i} className="bg-white rounded-2xl p-6 border border-gray-200 shadow-sm hover:shadow-lg transition-all">
-                  <div className="flex items-start justify-between">
-                    <div>
-                      <p className="text-gray-600 text-sm font-semibold mb-2">{metric.label}</p>
-                      <p className="text-3xl font-black text-gray-900">{metric.value}</p>
-                    </div>
-                    <div className="text-4xl">{metric.icon}</div>
-                  </div>
-                </div>
-              ))}
+        <main className="flex-1 rounded-2xl bg-[#17181A] border border-white/10 p-5">
+          <header className="flex items-center justify-between mb-4">
+            <div>
+              <h2 className="text-4xl font-black tracking-tight">{activeTab === 'Dashboard' ? 'Dashboard Overview' : activeTab}</h2>
+              <p className="text-slate-400 font-semibold">{new Date().toLocaleDateString()} - Ahmedabad</p>
             </div>
+            <span className="rounded-full bg-violet-100 text-violet-700 px-4 py-1 text-sm font-black">System Online</span>
+          </header>
 
-            {/* Recent Activity */}
-            <div className="bg-white rounded-2xl p-6 border border-gray-200">
-              <h2 className="text-xl font-black mb-6">Recent Orders</h2>
-              <div className="overflow-x-auto">
-                <table className="w-full">
-                  <thead className="bg-gray-50 border-b border-gray-200">
-                    <tr>
-                      <th className="text-left py-3 px-4 font-bold text-sm text-gray-600">Order ID</th>
-                      <th className="text-left py-3 px-4 font-bold text-sm text-gray-600">Restaurant</th>
-                      <th className="text-left py-3 px-4 font-bold text-sm text-gray-600">Amount</th>
-                      <th className="text-left py-3 px-4 font-bold text-sm text-gray-600">Status</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {orders.slice(0, 5).map((order) => (
-                      <tr key={order._id} className="border-b border-gray-100 hover:bg-gray-50">
-                        <td className="py-3 px-4 font-mono text-sm">#{order._id.substring(0, 8)}</td>
-                        <td className="py-3 px-4 text-sm font-semibold text-gray-900">{order.restaurantId}</td>
-                        <td className="py-3 px-4 font-bold text-green-600">₹{order.totalAmount}</td>
-                        <td className="py-3 px-4">
-                          <span className={`inline-block px-3 py-1 rounded-full text-xs font-bold ${
-                            (order.orderStatus || order.status) === 'delivered' ? 'bg-green-100 text-green-700' :
-                            (order.orderStatus || order.status) === 'out_for_delivery' ? 'bg-blue-100 text-blue-700' :
-                            'bg-yellow-100 text-yellow-700'
-                          }`}>
-                            {order.orderStatus || order.status}
-                          </span>
-                        </td>
-                      </tr>
+          {loading ? (
+            <div className="h-[70vh] flex items-center justify-center text-slate-300">Loading data...</div>
+          ) : activeTab === 'Dashboard' ? (
+            <>
+              <section className="grid grid-cols-4 gap-3 mb-4">
+                <div className="rounded-xl bg-[#2A2B2E] p-4 border border-white/10">
+                  <p className="text-slate-300 text-sm">Total Users</p>
+                  <p className="text-5xl font-black">{stats?.totalUsers || 0}</p>
+                </div>
+                <div className="rounded-xl bg-[#2A2B2E] p-4 border border-white/10">
+                  <p className="text-slate-300 text-sm">Total Orders</p>
+                  <p className="text-5xl font-black">{stats?.totalOrders || 0}</p>
+                </div>
+                <div className="rounded-xl bg-[#2A2B2E] p-4 border border-white/10">
+                  <p className="text-slate-300 text-sm">Restaurants</p>
+                  <p className="text-5xl font-black">{stats?.totalRestaurants || 0}</p>
+                </div>
+                <div className="rounded-xl bg-[#2A2B2E] p-4 border border-white/10">
+                  <p className="text-slate-300 text-sm">Revenue (₹)</p>
+                  <p className="text-5xl font-black">{revenueText}</p>
+                </div>
+              </section>
+
+              <section className="grid grid-cols-3 gap-3 mb-4">
+                <div className="col-span-2 rounded-xl bg-[#2A2B2E] p-4 border border-white/10">
+                  <div className="flex items-center justify-between mb-3">
+                    <h3 className="font-black text-xl">Weekly Orders</h3>
+                    <span className="text-violet-400 text-sm font-bold">Last 7 days</span>
+                  </div>
+                  <div className="h-40 flex items-end gap-3">
+                    {weeklyBars.map((value, idx) => (
+                      <div key={weekLabels[idx]} className="flex-1 flex flex-col items-center gap-2">
+                        <div className="w-full rounded-md bg-violet-600/90" style={{ height: `${(value / maxBar) * 120}px` }} />
+                        <span className="text-xs text-slate-300">{weekLabels[idx]}</span>
+                      </div>
                     ))}
-                  </tbody>
-                </table>
-              </div>
-            </div>
-          </div>
-        )}
-
-        {/* Users Tab */}
-        {activeTab === 'users' && (
-          <div className="bg-white rounded-2xl p-6 border border-gray-200">
-            <h2 className="text-xl font-black mb-6">All Users ({users.length})</h2>
-            <div className="overflow-x-auto">
-              <table className="w-full">
-                <thead className="bg-gray-50 border-b border-gray-200">
-                  <tr>
-                    <th className="text-left py-3 px-4 font-bold text-sm text-gray-600">Name</th>
-                    <th className="text-left py-3 px-4 font-bold text-sm text-gray-600">Email</th>
-                    <th className="text-left py-3 px-4 font-bold text-sm text-gray-600">Role</th>
-                    <th className="text-left py-3 px-4 font-bold text-sm text-gray-600">Status</th>
-                    <th className="text-right py-3 px-4 font-bold text-sm text-gray-600">Actions</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {users.map((user: any) => (
-                    <tr key={user._id} className="border-b border-gray-100 hover:bg-gray-50">
-                      <td className="py-3 px-4 font-semibold text-gray-900">{user.name}</td>
-                      <td className="py-3 px-4 text-sm text-gray-600">{user.email}</td>
-                      <td className="py-3 px-4">
-                        <select 
-                          className="text-xs bg-gray-100 px-2 py-1 rounded" 
-                          value={user.role} 
-                          onChange={(e) => handleRoleChange(user._id, e.target.value)}
-                        >
-                           <option value="customer">Customer</option>
-                           <option value="restaurant_owner">Restaurant Partner</option>
-                           <option value="delivery_partner">Delivery Partner</option>
-                           <option value="admin">Admin</option>
-                        </select>
-                      </td>
-                      <td className="py-3 px-4">
-                         <span className={`inline-block px-3 py-1 rounded-full text-xs font-bold ${user.isActive ? 'bg-green-100 text-green-700' : 'bg-red-100 text-red-700'}`}>
-                           {user.isActive ? 'Active' : 'Disabled'}
-                         </span>
-                      </td>
-                      <td className="py-3 px-4 text-right">
-                         <button 
-                            onClick={() => handleStatusChange(user._id, !user.isActive)}
-                            className={`text-xs font-bold px-3 py-1 rounded border ${user.isActive ? 'text-red-600 border-red-600 hover:bg-red-50' : 'text-green-600 border-green-600 hover:bg-green-50'}`}
-                         >
-                            {user.isActive ? 'Ban/Disable' : 'Enable'}
-                         </button>
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-          </div>
-        )}
-
-        {/* Restaurants Tab */}
-        {activeTab === 'restaurants' && (
-          <div className="bg-white rounded-2xl p-6 border border-gray-200">
-            <h2 className="text-xl font-black mb-6">All Restaurants ({restaurants.length})</h2>
-            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-              {restaurants.map((restaurant) => (
-                <div key={restaurant._id} className="border border-gray-200 rounded-xl overflow-hidden hover:shadow-lg transition-all">
-                  <img 
-                    src={restaurant.imageUrl || 'https://via.placeholder.com/300x200?text=Restaurant'} 
-                    alt={restaurant.name}
-                    className="w-full h-40 object-cover"
-                  />
-                  <div className="p-4">
-                    <h3 className="font-black text-lg text-gray-900 mb-2">{restaurant.name}</h3>
-                    <p className="text-sm text-gray-600 mb-3">{restaurant.cuisine.join(', ')}</p>
-                    <div className="flex justify-between items-center text-sm">
-                      <span className="font-bold text-gray-900">⭐ {restaurant.rating}</span>
-                      <span className={`font-bold ${restaurant.isOpen ? 'text-green-600' : 'text-red-600'}`}>
-                        {restaurant.isOpen ? '🟢 Open' : '🔴 Closed'}
-                      </span>
-                    </div>
                   </div>
                 </div>
-              ))}
-            </div>
-          </div>
-        )}
 
-        {/* Orders Tab */}
-        {activeTab === 'orders' && (
-          <div className="bg-white rounded-2xl p-6 border border-gray-200">
-            <h2 className="text-xl font-black mb-6">All Orders ({orders.length})</h2>
-            <div className="space-y-4">
-              {orders.map((order) => (
-                <div key={order._id} className="border border-gray-200 rounded-lg p-4 hover:bg-gray-50 transition-all">
-                  <div className="flex justify-between items-start">
-                    <div>
-                      <p className="font-bold text-gray-900">Order #{order._id.substring(0, 8)}</p>
-                      <p className="text-sm text-gray-600 mt-1">Amount: ₹{order.totalAmount}</p>
-                    </div>
-                    <span className={`px-3 py-1 rounded-full text-xs font-bold ${
-                      (order.orderStatus || order.status) === 'delivered' ? 'bg-green-100 text-green-700' :
-                      (order.orderStatus || order.status) === 'out_for_delivery' ? 'bg-blue-100 text-blue-700' :
-                      (order.orderStatus || order.status) === 'preparing' ? 'bg-yellow-100 text-yellow-700' :
-                      'bg-gray-100 text-gray-700'
-                    }`}>
-                      {order.orderStatus || order.status}
-                    </span>
+                <div className="rounded-xl bg-[#2A2B2E] p-4 border border-white/10">
+                  <h3 className="font-black text-xl mb-3">User Roles</h3>
+                  <div className="space-y-3 text-sm">
+                    <div className="flex justify-between"><span>Customers</span><span>{usersByRole.customer}</span></div>
+                    <div className="flex justify-between"><span>Rest. Owners</span><span>{usersByRole.restaurant_owner}</span></div>
+                    <div className="flex justify-between"><span>Delivery</span><span>{usersByRole.delivery_partner}</span></div>
+                    <div className="flex justify-between"><span>Admin</span><span>{usersByRole.admin}</span></div>
                   </div>
                 </div>
-              ))}
-            </div>
-          </div>
-        )}
+              </section>
 
-        {/* Suggestions Tab */}
-        {activeTab === 'suggestions' && (
-          <div className="bg-white rounded-2xl p-6 border border-gray-200">
-            <h2 className="text-xl font-black mb-6">Pending Restaurant Suggestions ({suggestions.length})</h2>
-            <div className="space-y-4">
-              {suggestions.length === 0 && <p className="text-gray-500 text-sm">No pending suggestions.</p>}
-              {suggestions.map((suggestion) => (
-                <div key={suggestion._id} className="border border-gray-200 rounded-lg p-5 hover:bg-gray-50 transition-all flex justify-between items-center">
-                  <div>
-                    <h3 className="font-black text-gray-900">{suggestion.name} <span className="text-xs font-bold bg-blue-100 text-blue-800 px-2 rounded-full">{suggestion.cuisine?.join(', ')}</span></h3>
-                    <p className="text-sm text-gray-500 mt-1">{suggestion.location?.address}</p>
-                    <p className="text-xs text-gray-400 mt-1">Suggested by: {suggestion.suggestedBy} | Phone: {suggestion.phone}</p>
+              <section className="grid grid-cols-3 gap-3">
+                <div className="col-span-2 rounded-xl bg-[#2A2B2E] p-4 border border-white/10">
+                  <div className="flex items-center justify-between mb-3">
+                    <h3 className="font-black text-xl">Recent Orders</h3>
+                    <button className="text-violet-400 font-bold text-sm">View all</button>
                   </div>
-                  <div className="flex gap-2">
-                    <button onClick={() => handleSuggestion(suggestion._id, 'approved')} className="bg-green-100 text-green-700 hover:bg-green-200 font-bold px-4 py-2 rounded-lg text-sm transition">Approve</button>
-                    <button onClick={() => handleSuggestion(suggestion._id, 'rejected')} className="bg-red-100 text-red-700 hover:bg-red-200 font-bold px-4 py-2 rounded-lg text-sm transition">Reject</button>
+                  <div className="space-y-2">
+                    {orders.length > 0 ? orders.slice(0, 5).map((order) => (
+                      <div key={order._id} className="grid grid-cols-4 gap-2 items-center text-sm">
+                        <span className="text-slate-300">#{String(order._id).slice(-4)}</span>
+                        <span>{order?.customer?.name || order?.customerName || 'Customer'}</span>
+                        <span>₹{order?.total || order?.totalAmount || 0}</span>
+                        <span className={`w-fit px-3 py-1 rounded-full text-xs font-black ${statusStyle(order?.status || order?.orderStatus)}`}>
+                          {(order?.status || order?.orderStatus || 'pending').toString()}
+                        </span>
+                      </div>
+                    )) : <div className="text-sm text-slate-400 py-4">No recent orders found.</div>}
                   </div>
                 </div>
-              ))}
-            </div>
-          </div>
-        )}
 
-        {/* Activity Logs Tab */}
-        {activeTab === 'activity' && (
-          <div className="bg-white rounded-2xl p-6 border border-gray-200">
-            <h2 className="text-xl font-black mb-6">System Activity Logs</h2>
-            <div className="overflow-x-auto">
-              <table className="w-full text-left">
-                <thead className="bg-gray-50 border-b">
-                  <tr>
-                    <th className="py-3 px-4 font-bold text-sm text-gray-600">Timestamp</th>
-                    <th className="py-3 px-4 font-bold text-sm text-gray-600">User Email</th>
-                    <th className="py-3 px-4 font-bold text-sm text-gray-600">Role</th>
-                    <th className="py-3 px-4 font-bold text-sm text-gray-600">Action</th>
-                    <th className="py-3 px-4 font-bold text-sm text-gray-600">Details</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {activityLogs.map((log) => (
-                    <tr key={log._id} className="border-b border-gray-100 hover:bg-gray-50">
-                      <td className="py-3 px-4 text-xs text-gray-500">{new Date(log.createdAt).toLocaleString()}</td>
-                      <td className="py-3 px-4 text-sm font-semibold">{log.userId?.email || 'System'}</td>
-                      <td className="py-3 px-4 text-xs font-bold uppercase tracking-widest text-[#EF4F5F]">{log.userRole}</td>
-                      <td className="py-3 px-4 text-sm font-bold text-gray-800">{log.action}</td>
-                      <td className="py-3 px-4 text-xs text-gray-500 font-mono">
-                        {log.details ? JSON.stringify(log.details) : '-'}
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-          </div>
-        )}
-
-        {/* Analytics Tab */}
-        {activeTab === 'analytics' && (
-          <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-            <div className="bg-white rounded-2xl p-6 border border-gray-200">
-              <h2 className="text-lg font-black mb-4">Platform Growth</h2>
-              <div className="space-y-3">
-                <div>
-                  <p className="text-sm font-semibold text-gray-600 mb-1">User Growth: {stats.totalUsers}</p>
-                  <div className="w-full bg-gray-200 rounded-full h-2">
-                    <div className="bg-blue-600 h-2 rounded-full" style={{width: `${Math.min((stats.totalUsers / 100) * 100, 100)}%`}}></div>
+                <div className="rounded-xl bg-[#2A2B2E] p-4 border border-white/10">
+                  <h3 className="font-black text-xl mb-3">System Alerts</h3>
+                  <div className="space-y-2 text-sm">
+                    <div className="rounded-lg border-l-4 border-amber-400 bg-white/5 p-2">3 restaurants pending approval</div>
+                    <div className="rounded-lg border-l-4 border-violet-400 bg-white/5 p-2">12 new review submissions</div>
+                    <div className="rounded-lg border-l-4 border-emerald-400 bg-white/5 p-2">Payment gateway active</div>
+                    <div className="rounded-lg border-l-4 border-rose-400 bg-white/5 p-2">2 failed delivery attempts</div>
                   </div>
                 </div>
-                <div>
-                  <p className="text-sm font-semibold text-gray-600 mb-1">Restaurant Network: {stats.totalRestaurants}</p>
-                  <div className="w-full bg-gray-200 rounded-full h-2">
-                    <div className="bg-green-600 h-2 rounded-full" style={{width: `${Math.min((stats.totalRestaurants / 50) * 100, 100)}%`}}></div>
-                  </div>
-                </div>
-                <div>
-                  <p className="text-sm font-semibold text-gray-600 mb-1">Order Volume: {stats.totalOrders}</p>
-                  <div className="w-full bg-gray-200 rounded-full h-2">
-                    <div className="bg-orange-600 h-2 rounded-full" style={{width: `${Math.min((stats.totalOrders / 100) * 100, 100)}%`}}></div>
-                  </div>
-                </div>
-              </div>
+              </section>
+            </>
+          ) : activeTab === 'Users' ? (
+            <AdminUsersPanel />
+          ) : activeTab === 'Restaurants' ? (
+            <AdminRestaurantsPanel />
+          ) : activeTab === 'Orders' ? (
+            <AdminOrdersPanel />
+          ) : activeTab === 'Delivery' ? (
+            <AdminDeliveryAdvanced />
+          ) : activeTab === 'Activity Logs' ? (
+            <AdminActivityLogsPanel />
+          ) : activeTab === 'Reviews' ? (
+            <AdminReviewsPanel />
+          ) : activeTab === 'Subscriptions' ? (
+            <AdminSubscriptionsPanel />
+          ) : (
+            <div className="h-[60vh] flex flex-col items-center justify-center text-slate-400 border-2 border-dashed border-white/10 rounded-xl mt-4">
+               <i className="fa-solid fa-person-digging text-5xl mb-4 text-violet-400"></i>
+               <h3 className="text-2xl font-black text-white">Under Development</h3>
+               <p className="mt-2 text-sm max-w-md text-center">The {activeTab} section is currently being built and will be available in a future update.</p>
+               <button onClick={() => setActiveTab('Dashboard')} className="mt-6 px-6 py-2 bg-violet-600 hover:bg-violet-500 text-white rounded-lg font-bold text-sm transition">
+                 Return to Dashboard
+               </button>
             </div>
-
-            <div className="bg-white rounded-2xl p-6 border border-gray-200">
-              <h2 className="text-lg font-black mb-4">Revenue Stats</h2>
-              <div className="space-y-4">
-                <div className="flex justify-between items-center">
-                  <p className="text-gray-600 font-semibold">Total Revenue</p>
-                  <p className="text-2xl font-black text-green-600">₹{stats.totalRevenue.toLocaleString()}</p>
-                </div>
-                <div className="flex justify-between items-center">
-                  <p className="text-gray-600 font-semibold">Avg Order Value</p>
-                  <p className="text-2xl font-black text-blue-600">₹{stats.avgOrderValue}</p>
-                </div>
-                <div className="flex justify-between items-center">
-                  <p className="text-gray-600 font-semibold">Platform Fee (10%)</p>
-                  <p className="text-2xl font-black text-purple-600">₹{Math.round(stats.totalRevenue * 0.1).toLocaleString()}</p>
-                </div>
-              </div>
-            </div>
-          </div>
-        )}
+          )}
+        </main>
       </div>
     </div>
   );

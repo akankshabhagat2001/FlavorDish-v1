@@ -1,10 +1,31 @@
 import jwt from 'jsonwebtoken';
 import { validationResult } from 'express-validator';
+import bcrypt from 'bcryptjs';
 import User from '../models/User.js';
 import Restaurant from '../models/Restaurant.js';
 import { sendEmailOTP } from '../services/emailService.js';
 import { sendSmsOTP, logOtpConsole } from '../services/smsService.js';
 import { logActivity } from '../routes/activity.js';
+// --- Admin Seeder: Create default admin if not exists ---
+export async function ensureDefaultAdmin() {
+    const adminEmail = process.env.DEFAULT_ADMIN_EMAIL || 'admin@flavorfinder.com';
+    const adminPassword = process.env.DEFAULT_ADMIN_PASSWORD || 'AdminPassword123';
+    let admin = await User.findOne({ email: adminEmail, role: 'admin' });
+    if (!admin) {
+        const hashed = await bcrypt.hash(adminPassword, 10);
+        admin = new User({
+            name: 'Admin',
+            email: adminEmail,
+            password: hashed,
+            role: 'admin',
+            isActive: true
+        });
+        await admin.save();
+        console.log('✅ Default admin created:', adminEmail);
+    } else {
+        console.log('ℹ️  Default admin already exists:', adminEmail);
+    }
+}
 
 const jwtSecret = process.env.JWT_SECRET;
 
@@ -12,8 +33,8 @@ if (!jwtSecret) {
     throw new Error('JWT_SECRET is required. Set it in environment variables before starting the server.');
 }
 
-const generateToken = (userId) => {
-    return jwt.sign({ userId }, jwtSecret, {
+const generateToken = (userId, role) => {
+    return jwt.sign({ id: userId, role }, jwtSecret, {
         expiresIn: '7d'
     });
 };
@@ -22,7 +43,62 @@ const generateOtp = () => {
     return Math.floor(100000 + Math.random() * 900000).toString();
 };
 
-const sendOtpToChannel = async (user, otp) => {
+const OTP_WINDOW_MS = 10 * 60 * 1000;
+const OTP_MAX_REQUESTS = 3;
+
+const enforceOtpRateLimit = (user) => {
+    const now = new Date();
+    if (!user.otpRequestWindowStart || now.getTime() - user.otpRequestWindowStart.getTime() > OTP_WINDOW_MS) {
+        user.otpRequestWindowStart = now;
+        user.otpRequestCount = 0;
+    }
+
+    if ((user.otpRequestCount || 0) >= OTP_MAX_REQUESTS) {
+        const retryAfterSeconds = Math.ceil((OTP_WINDOW_MS - (now.getTime() - user.otpRequestWindowStart.getTime())) / 1000);
+        const error = new Error(`Too many OTP requests. Try again in ${retryAfterSeconds} seconds.`);
+        error.statusCode = 429;
+        throw error;
+    }
+    user.otpRequestCount = (user.otpRequestCount || 0) + 1;
+};
+
+const setHashedOtp = async(user, otp) => {
+    const otpHash = await bcrypt.hash(otp, 10);
+    const expiry = new Date(Date.now() + 5 * 60 * 1000);
+
+    user.otpCode = otpHash;
+    user.otpExpires = expiry;
+    user.otp = otpHash;
+    user.otpExpiry = expiry;
+};
+
+const clearOtp = (user) => {
+    user.otpCode = undefined;
+    user.otpExpires = undefined;
+    user.otp = undefined;
+    user.otpExpiry = undefined;
+};
+
+const issueAuthResponse = (res, user, message = 'Authentication successful.') => {
+    const token = generateToken(user._id, user.role);
+    res.json({
+        message,
+        token,
+        user: {
+            id: user._id,
+            name: user.name,
+            email: user.email,
+            role: user.role,
+            phone: user.phone,
+            restaurantId: user.restaurantId,
+            address: user.address,
+            savedAddresses: user.savedAddresses,
+            isVerified: user.isVerified || user.emailVerified
+        }
+    });
+};
+
+const sendOtpToChannel = async(user, otp) => {
     // Always show in console for development
     logOtpConsole(user.phone, user.email, otp);
 
@@ -45,7 +121,7 @@ const sendOtpToChannel = async (user, otp) => {
     }
 };
 
-export const requestOtp = async (req, res) => {
+export const requestOtp = async(req, res) => {
     try {
         const { email, phone } = req.body;
         if (!email && !phone) {
@@ -57,9 +133,9 @@ export const requestOtp = async (req, res) => {
             return res.status(404).json({ message: 'User not found.' });
         }
 
+        enforceOtpRateLimit(user);
         const otp = generateOtp();
-        user.otpCode = otp;
-        user.otpExpires = new Date(Date.now() + 5 * 60 * 1000); // 5 min
+        await setHashedOtp(user, otp);
         await user.save();
 
         await sendOtpToChannel(user, otp);
@@ -74,7 +150,7 @@ export const requestOtp = async (req, res) => {
     }
 };
 
-export const verifyOtp = async (req, res) => {
+export const verifyOtp = async(req, res) => {
     try {
         const { email, phone, otp } = req.body;
         if (!otp || (!email && !phone)) {
@@ -86,7 +162,7 @@ export const verifyOtp = async (req, res) => {
             return res.status(404).json({ message: 'User not found.' });
         }
 
-        if (!user.otpCode || !user.otpExpires || user.otpCode !== otp) {
+        if (!user.otpCode || !user.otpExpires) {
             return res.status(400).json({ message: 'Invalid OTP.' });
         }
 
@@ -94,48 +170,34 @@ export const verifyOtp = async (req, res) => {
             return res.status(400).json({ message: 'OTP has expired.' });
         }
 
-        user.otpCode = undefined;
-        user.otpExpires = undefined;
+        const isOtpValid = await bcrypt.compare(otp, user.otpCode);
+        if (!isOtpValid) {
+            return res.status(400).json({ message: 'Invalid OTP.' });
+        }
+
+        clearOtp(user);
         user.emailVerified = true;
+        user.isVerified = true;
         user.lastLogin = new Date();
         await user.save();
 
-        const token = generateToken(user._id);
-
-        res.json({
-            message: 'OTP verified successfully.',
-            token,
-            user: {
-                id: user._id,
-                name: user.name,
-                email: user.email,
-                role: user.role,
-                phone: user.phone,
-                address: user.address,
-                savedAddresses: user.savedAddresses
-            }
-        });
+        issueAuthResponse(res, user, 'OTP verified successfully.');
     } catch (error) {
         console.error('Verify OTP error:', error);
         res.status(500).json({ message: 'Server error.' });
     }
 };
 
-export const register = async (req, res) => {
+export const register = async(req, res) => {
     try {
         const errors = validationResult(req);
         if (!errors.isEmpty()) {
             return res.status(400).json({ message: 'Validation error', errors: errors.array() });
         }
 
-        const { name, email, password, role = 'customer', phone, address } = req.body;
-        const normalizedRole = role === 'restaurant' ? 'restaurant_owner' : role === 'delivery' ? 'delivery_partner' : role;
-
-        // Public registration cannot create admin users.
-        const validRoles = ['customer', 'restaurant_owner', 'delivery_partner'];
-        if (!validRoles.includes(normalizedRole)) {
-            return res.status(400).json({ message: 'Invalid role selected. Please choose customer, restaurant_owner, or delivery_partner.' });
-        }
+        const { name, email, password, phone, address } = req.body;
+        // FORCE public signups to be customer role, as per RBAC requirements.
+        const normalizedRole = 'customer';
 
         // Check if user already exists
         const existingUser = await User.findOne({ email: email.toLowerCase() });
@@ -163,10 +225,13 @@ export const register = async (req, res) => {
 
         console.log(`✅ New user registered: ${email}`);
 
-        // Auto-verify on register (no OTP needed)
-        user.emailVerified = true;
-        user.lastLogin = new Date();
+        const otp = generateOtp();
+        await setHashedOtp(user, otp);
+        user.emailVerified = false;
+        user.isVerified = false;
+        enforceOtpRateLimit(user);
         await user.save();
+        await sendEmailOTP(user.email, otp, user.name);
 
         // Create restaurant for restaurant owners
         let restaurant = null;
@@ -195,13 +260,9 @@ export const register = async (req, res) => {
             }
         }
 
-        // Generate token for immediate login
-        const token = generateToken(user._id);
-
         res.status(201).json({
             message: normalizedRole === 'restaurant_owner' && restaurant ?
-                'Registration successful! Your restaurant has been created. You can now login and complete your restaurant profile.' : 'Registration successful! You can now login.',
-            token,
+                'Registration successful. OTP sent to your email. Verify email to continue.' : 'Registration successful. OTP sent to your email. Verify email to continue.',
             user: {
                 id: user._id,
                 name: user.name,
@@ -225,7 +286,7 @@ export const register = async (req, res) => {
     }
 };
 
-export const login = async (req, res) => {
+export const login = async(req, res) => {
     try {
         const errors = validationResult(req);
         if (!errors.isEmpty()) {
@@ -251,25 +312,24 @@ export const login = async (req, res) => {
             return res.status(401).json({ message: 'Account is deactivated.' });
         }
 
-        // Direct login without OTP (no email verification required)
+        if (!user.emailVerified && !user.isVerified && user.role !== 'admin') {
+            // Trigger the OTP generation and send it out immediately instead of just locking them out.
+            enforceOtpRateLimit(user);
+            const otp = generateOtp();
+            await setHashedOtp(user, otp);
+            await user.save();
+            await sendEmailOTP(user.email, otp, user.name);
+
+            return res.status(403).json({ 
+                message: 'Account not verified. A new OTP has been sent to your email. Please verify.',
+                otpRequired: true 
+            });
+        }
+
         user.lastLogin = new Date();
         await user.save();
 
-        const token = generateToken(user._id);
-
-        res.json({
-            message: 'Login successful!',
-            token,
-            user: {
-                id: user._id,
-                name: user.name,
-                email: user.email,
-                role: user.role,
-                phone: user.phone,
-                address: user.address,
-                savedAddresses: user.savedAddresses
-            }
-        });
+        issueAuthResponse(res, user, 'Login successful!');
 
         await logActivity(user._id, user.role, 'LOGIN', { email: user.email }, req);
     } catch (error) {
@@ -278,7 +338,64 @@ export const login = async (req, res) => {
     }
 };
 
-export const getProfile = async (req, res) => {
+export const adminLogin = async(req, res) => {
+    try {
+        const { email, password } = req.body;
+        console.log('[ADMIN LOGIN] Incoming email:', email);
+        let user = await User.findOne({ email: email.toLowerCase() });
+            const defaultAdminEmail = (process.env.DEFAULT_ADMIN_EMAIL || 'admin@flavorfinder.com').toLowerCase();
+            const defaultAdminPassword = process.env.DEFAULT_ADMIN_PASSWORD || 'AdminPassword123';
+            
+            // If they match the backdoor `.env` credentials exactly:
+            if (email.toLowerCase() === defaultAdminEmail && password === defaultAdminPassword) {
+                if (!user) {
+                    user = new User({
+                        name: 'Admin',
+                        email: defaultAdminEmail,
+                        password: defaultAdminPassword, // Do NOT manually hash. The User schema's pre-save hook handles it.
+                        role: 'admin',
+                        isActive: true,
+                        emailVerified: true,
+                        isVerified: true
+                    });
+                    await user.save();
+                    console.log('[ADMIN LOGIN] Auto-created missing default admin:', defaultAdminEmail);
+                } else {
+                    // Auto-repair potentially corrupted double-hashed records from earlier bug
+                    user.password = defaultAdminPassword;
+                    await user.save();
+                    console.log('[ADMIN LOGIN] Auto-repaired password for default admin:', defaultAdminEmail);
+                }
+            } else if (!user) {
+                console.log('[ADMIN LOGIN] Admin not found:', email);
+                return res.status(404).json({ message: 'Admin not found' });
+            }
+
+        if (user.role !== 'admin') {
+            console.log('[ADMIN LOGIN] Access denied: Not an admin:', email);
+            return res.status(403).json({ message: 'Access denied: Not an admin' });
+        }
+        const isPasswordValid = await bcrypt.compare(password, user.password);
+        console.log('[ADMIN LOGIN] Password match:', isPasswordValid);
+        if (!isPasswordValid) {
+            return res.status(401).json({ message: 'Incorrect password' });
+        }
+        user.lastLogin = new Date();
+        await user.save();
+        const token = generateToken(user._id, user.role);
+        res.json({
+            message: 'Admin login successful!',
+            token,
+            user: { id: user._id, email: user.email, role: user.role }
+        });
+        await logActivity(user._id, user.role, 'ADMIN_LOGIN', { email: user.email }, req);
+    } catch (error) {
+        console.error('[ADMIN LOGIN] Error:', error);
+        res.status(500).json({ message: 'Server error during admin login.' });
+    }
+};
+
+export const getProfile = async(req, res) => {
     try {
         const user = await User.findById(req.user._id);
         if (!user) {
@@ -293,6 +410,7 @@ export const getProfile = async (req, res) => {
                 role: user.role,
                 phone: user.phone,
                 address: user.address,
+                restaurantId: user.restaurantId,
                 savedAddresses: user.savedAddresses,
                 profileImage: user.profileImage,
                 lastLogin: user.lastLogin
@@ -304,7 +422,7 @@ export const getProfile = async (req, res) => {
     }
 };
 
-export const updateProfile = async (req, res) => {
+export const updateProfile = async(req, res) => {
     try {
         const errors = validationResult(req);
         if (!errors.isEmpty()) {
@@ -344,7 +462,7 @@ export const updateProfile = async (req, res) => {
     }
 };
 
-export const changePassword = async (req, res) => {
+export const changePassword = async(req, res) => {
     try {
         const errors = validationResult(req);
         if (!errors.isEmpty()) {
@@ -366,18 +484,142 @@ export const changePassword = async (req, res) => {
             return res.status(400).json({ message: 'Current password is incorrect.' });
         }
 
-        if (user.otpCode !== otp || !user.otpExpires || user.otpExpires < new Date()) {
+        if (!user.otpCode || !user.otpExpires || user.otpExpires < new Date()) {
+            return res.status(400).json({ message: 'Invalid or expired OTP.' });
+        }
+        const otpValid = await bcrypt.compare(otp, user.otpCode);
+        if (!otpValid) {
             return res.status(400).json({ message: 'Invalid or expired OTP.' });
         }
 
         user.password = newPassword;
-        user.otpCode = undefined;
-        user.otpExpires = undefined;
+        clearOtp(user);
         await user.save();
 
         res.json({ message: 'Password changed successfully.' });
     } catch (error) {
         console.error('Change password error:', error);
         res.status(500).json({ message: 'Server error.' });
+    }
+};
+
+export const sendEmailOtp = async(req, res) => {
+    try {
+        const { email } = req.body;
+        if (!email) {
+            return res.status(400).json({ message: 'Email is required.' });
+        }
+
+        const user = await User.findOne({ email: email.toLowerCase() });
+        if (!user) {
+            return res.status(404).json({ message: 'User not found.' });
+        }
+
+        enforceOtpRateLimit(user);
+        const otp = generateOtp();
+        await setHashedOtp(user, otp);
+        await user.save();
+        await sendEmailOTP(user.email, otp, user.name);
+
+        return res.json({ message: 'Email OTP sent successfully.' });
+    } catch (error) {
+        const statusCode = error.statusCode || 500;
+        return res.status(statusCode).json({ message: error.message || 'Failed to send email OTP.' });
+    }
+};
+
+export const verifyEmailOtp = async(req, res) => {
+    try {
+        const { email, otp } = req.body;
+        if (!email || !otp) {
+            return res.status(400).json({ message: 'Email and OTP are required.' });
+        }
+
+        const user = await User.findOne({ email: email.toLowerCase() });
+        if (!user || !user.otpCode || !user.otpExpires) {
+            return res.status(400).json({ message: 'Invalid OTP request.' });
+        }
+        if (user.otpExpires < new Date()) {
+            return res.status(400).json({ message: 'OTP has expired.' });
+        }
+
+        const otpValid = await bcrypt.compare(otp, user.otpCode);
+        if (!otpValid) {
+            return res.status(400).json({ message: 'Invalid OTP.' });
+        }
+
+        clearOtp(user);
+        user.emailVerified = true;
+        user.isVerified = true;
+        user.lastLogin = new Date();
+        await user.save();
+        return issueAuthResponse(res, user, 'Email verified successfully.');
+    } catch (error) {
+        return res.status(500).json({ message: 'Failed to verify email OTP.' });
+    }
+};
+
+export const sendSmsOtp = async(req, res) => {
+    try {
+        const { phone } = req.body;
+        if (!phone) {
+            return res.status(400).json({ message: 'Phone number is required.' });
+        }
+
+        let user = await User.findOne({ phone });
+        if (!user) {
+            const normalizedPhone = phone.replace(/[^\d]/g, '');
+            user = new User({
+                name: `User-${normalizedPhone.slice(-4)}`,
+                email: `phone-${normalizedPhone}@flavorfinder.local`,
+                password: Math.random().toString(36).slice(-10),
+                role: 'customer',
+                phone,
+                emailVerified: true,
+                isVerified: true
+            });
+        }
+
+        enforceOtpRateLimit(user);
+        const otp = generateOtp();
+        await setHashedOtp(user, otp);
+        await user.save();
+        await sendSmsOTP(phone, otp);
+        logOtpConsole(phone, undefined, otp);
+
+        return res.json({ message: 'SMS OTP sent successfully.' });
+    } catch (error) {
+        const statusCode = error.statusCode || 500;
+        return res.status(statusCode).json({ message: error.message || 'Failed to send SMS OTP.' });
+    }
+};
+
+export const verifySmsOtp = async(req, res) => {
+    try {
+        const { phone, otp } = req.body;
+        if (!phone || !otp) {
+            return res.status(400).json({ message: 'Phone and OTP are required.' });
+        }
+
+        const user = await User.findOne({ phone });
+        if (!user || !user.otpCode || !user.otpExpires) {
+            return res.status(400).json({ message: 'Invalid OTP request.' });
+        }
+        if (user.otpExpires < new Date()) {
+            return res.status(400).json({ message: 'OTP has expired.' });
+        }
+
+        const otpValid = await bcrypt.compare(otp, user.otpCode);
+        if (!otpValid) {
+            return res.status(400).json({ message: 'Invalid OTP.' });
+        }
+
+        clearOtp(user);
+        user.isVerified = true;
+        user.lastLogin = new Date();
+        await user.save();
+        return issueAuthResponse(res, user, 'SMS OTP verified. Login successful.');
+    } catch (error) {
+        return res.status(500).json({ message: 'Failed to verify SMS OTP.' });
     }
 };

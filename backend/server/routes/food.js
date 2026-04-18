@@ -2,9 +2,17 @@ import express from 'express';
 import { body, query, validationResult } from 'express-validator';
 import Food from '../models/Food.js';
 import Restaurant from '../models/Restaurant.js';
-import { authenticate, authorize, optionalAuth } from '../middleware/auth.js';
+import { authMiddleware as authenticate, optionalAuth } from '../middleware/authMiddleware.js';
+import { authorizeRoles as authorize } from '../middleware/roleMiddleware.js';;
 
 const router = express.Router();
+
+const generateSku = async(restaurantId) => {
+    const suffix = String(restaurantId).slice(-6).toUpperCase();
+    const existingCount = await Food.countDocuments({ restaurant: restaurantId });
+    const sequence = String(existingCount + 1).padStart(4, '0');
+    return `FOOD-${suffix}-${sequence}`;
+};
 
 // Get all foods with filtering and search
 router.get('/', optionalAuth, async(req, res) => {
@@ -16,13 +24,18 @@ router.get('/', optionalAuth, async(req, res) => {
             isVeg,
             minPrice,
             maxPrice,
+            showUnavailable,
             sortBy = 'name',
             sortOrder = 'asc',
             page = 1,
             limit = 20
         } = req.query;
 
-        let query = { isAvailable: true };
+        const includeUnavailable = String(showUnavailable).toLowerCase() === 'true';
+        let query = {};
+        if (!includeUnavailable) {
+            query.isAvailable = true;
+        }
 
         // Search functionality
         if (search) {
@@ -78,6 +91,17 @@ router.get('/', optionalAuth, async(req, res) => {
     }
 });
 
+// Get categories
+router.get('/categories/all', async(req, res) => {
+    try {
+        const categories = await Food.distinct('category', { isAvailable: true });
+        res.json({ categories });
+    } catch (error) {
+        console.error('Get categories error:', error);
+        res.status(500).json({ message: 'Server error.' });
+    }
+});
+
 // Get food by ID
 router.get('/:id', optionalAuth, async(req, res) => {
     try {
@@ -108,7 +132,7 @@ router.post('/', authenticate, authorize('restaurant_owner', 'admin'), [
             return res.status(400).json({ errors: errors.array() });
         }
 
-        const { name, description, price, category, subcategory, restaurant, images, isVeg, preparationTime, tags } = req.body;
+        const { name, description, price, category, subcategory, restaurant, images, isVeg, isAvailable, preparationTime, tags, sku, nutritionalInfo } = req.body;
 
         // Verify restaurant ownership
         const restaurantDoc = await Restaurant.findById(restaurant);
@@ -120,6 +144,7 @@ router.post('/', authenticate, authorize('restaurant_owner', 'admin'), [
             return res.status(403).json({ message: 'You can only add food to your own restaurant.' });
         }
 
+        const generatedSku = sku || await generateSku(restaurant);
         const food = new Food({
             name,
             description,
@@ -129,8 +154,11 @@ router.post('/', authenticate, authorize('restaurant_owner', 'admin'), [
             restaurant,
             images,
             isVeg,
+            isAvailable,
             preparationTime,
-            tags
+            tags,
+            sku: generatedSku,
+            nutritionalInfo
         });
 
         await food.save();
@@ -208,17 +236,6 @@ router.delete('/:id', authenticate, authorize('restaurant_owner', 'admin'), asyn
         res.json({ message: 'Food item deleted successfully.' });
     } catch (error) {
         console.error('Delete food error:', error);
-        res.status(500).json({ message: 'Server error.' });
-    }
-});
-
-// Get categories
-router.get('/categories/all', async(req, res) => {
-    try {
-        const categories = await Food.distinct('category', { isAvailable: true });
-        res.json({ categories });
-    } catch (error) {
-        console.error('Get categories error:', error);
         res.status(500).json({ message: 'Server error.' });
     }
 });

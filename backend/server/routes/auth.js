@@ -1,7 +1,7 @@
 import express from 'express';
 import { body } from 'express-validator';
-import { register, login, requestOtp, verifyOtp, getProfile, updateProfile, changePassword } from '../controllers/authController.js';
-import { authenticate } from '../middleware/auth.js';
+import { register, login, adminLogin, requestOtp, verifyOtp, getProfile, updateProfile, changePassword, sendEmailOtp, verifyEmailOtp, sendSmsOtp, verifySmsOtp } from '../controllers/authController.js';
+import { authMiddleware as authenticate } from '../middleware/authMiddleware.js';;
 
 const router = express.Router();
 
@@ -31,8 +31,19 @@ const changePasswordValidation = [
 // Routes
 router.post('/register', registerValidation, register);
 router.post('/login', loginValidation, login);
+router.post('/admin-login', loginValidation, adminLogin);
 router.post('/request-otp', requestOtp);
 router.post('/verify-otp', verifyOtp);
+router.post('/send-email-otp', [body('email').isEmail().withMessage('Valid email is required')], sendEmailOtp);
+router.post('/verify-email-otp', [
+    body('email').isEmail().withMessage('Valid email is required'),
+    body('otp').isLength({ min: 6, max: 6 }).withMessage('6-digit OTP is required')
+], verifyEmailOtp);
+router.post('/send-sms-otp', [body('phone').trim().notEmpty().withMessage('Phone number is required')], sendSmsOtp);
+router.post('/verify-sms-otp', [
+    body('phone').trim().notEmpty().withMessage('Phone number is required'),
+    body('otp').isLength({ min: 6, max: 6 }).withMessage('6-digit OTP is required')
+], verifySmsOtp);
 router.get('/profile', authenticate, getProfile);
 router.put('/profile', authenticate, updateProfileValidation, updateProfile);
 router.put('/change-password', authenticate, changePasswordValidation, changePassword);

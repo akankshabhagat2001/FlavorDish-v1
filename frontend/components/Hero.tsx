@@ -68,7 +68,7 @@ const Hero: React.FC<HeroProps> = ({
     if (role === 'admin') return 'admin';
     if (role === 'restaurant') return 'partner';
     if (role === 'delivery') return 'delivery';
-    return 'history';
+    return 'customer-dashboard';
   };
 
   return (
@@ -90,8 +90,9 @@ const Hero: React.FC<HeroProps> = ({
                <button onClick={() => onAuthClick('signup')} className="text-white font-bold text-sm tracking-tight">Sign up</button>
              </>
            ) : (
-             <div className="flex gap-8">
-               {currentUser.role === 'customer' && <button onClick={() => onViewChange('history')} className="text-white font-bold text-sm tracking-tight">Orders</button>}
+             <div className="flex gap-8 items-center">
+               {currentUser.role === 'customer' && <button onClick={() => onViewChange(getDashboardView(currentUser.role))} className="text-white font-bold text-sm tracking-tight">Orders</button>}
+               <button onClick={() => onViewChange('profile')} className="text-white font-bold text-sm tracking-tight">Profile</button>
                <button onClick={onLogout} className="text-white font-bold text-sm tracking-tight">Log out</button>
              </div>
            )}
@@ -113,8 +114,9 @@ const Hero: React.FC<HeroProps> = ({
 
       <div className="relative z-10 w-full max-w-6xl px-4 text-center flex flex-col items-center">
         {/* Brand Logo with Enhanced Animation */}
-        <div className="mb-8 animate-bounce">
-          <h1 className="text-6xl sm:text-7xl md:text-8xl font-black text-white italic tracking-tighter drop-shadow-2xl bg-gradient-to-r from-red-400 via-pink-400 to-orange-400 bg-clip-text text-transparent" style={{textShadow: '0 8px 30px rgba(239, 79, 95, 0.6)'}}>
+        <div className="mb-8 animate-bounce flex flex-col items-center">
+          <img src="/images/logo.png" alt="flavorfinder logo" className="h-[120px] md:h-[180px] w-auto object-contain drop-shadow-2xl" onError={(e) => { e.currentTarget.style.display = 'none'; e.currentTarget.nextElementSibling?.classList.remove('hidden'); }} />
+          <h1 className="text-6xl sm:text-7xl md:text-8xl font-black text-white italic tracking-tighter drop-shadow-2xl bg-gradient-to-r from-red-400 via-pink-400 to-orange-400 bg-clip-text text-transparent hidden" style={{textShadow: '0 8px 30px rgba(239, 79, 95, 0.6)'}}>
             flavorfinder
           </h1>
           <div className="h-1.5 w-40 bg-gradient-to-r from-[#EF4F5F] via-orange-400 to-yellow-400 mx-auto mt-4 rounded-full shadow-lg animate-pulse"></div>

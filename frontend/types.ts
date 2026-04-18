@@ -1,7 +1,7 @@
 
 export type RoleType = "customer" | "restaurant" | "delivery" | "admin";
 export type UserType = RoleType;
-export type OrderStatusType = "placed" | "preparing" | "ready" | "out_for_delivery" | "dispatched" | "in-transit" | "near" | "delivered" | "cancelled";
+export type OrderStatusType = "pending" | "placed" | "confirmed" | "preparing" | "ready" | "picked_up" | "out_for_delivery" | "dispatched" | "in-transit" | "near" | "delivered" | "cancelled";
 export type PaymentStatusType = "pending" | "paid" | "failed";
 export type DeliveryStatusType = "assigned" | "picked" | "delivered";
 export type BookingStatusType = "confirmed" | "cancelled" | "pending" | "paid";
@@ -132,6 +132,9 @@ export interface Order {
   tax?: number;
   orderStatus: OrderStatusType;
   status?: OrderStatusType;
+  customerName?: string;
+  customerPhone?: string;
+  customerAddress?: string;
   ratings?: {
     food?: number;
     delivery?: number;
@@ -310,7 +313,8 @@ export type AppViewState =
   | 'privacy'
   | 'terms'
   | 'sitemap'
-  | 'blinkit';
+  | 'blinkit'
+  | 'test_routing';
 
 export interface LocalFood {
   _id: string;

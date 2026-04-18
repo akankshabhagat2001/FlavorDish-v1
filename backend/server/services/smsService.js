@@ -75,7 +75,7 @@ export const sendFast2SMS = async(phone, otp) => {
  */
 export const sendTwilioSMS = async(phone, otp) => {
     try {
-        const accountSid = process.env.TWILIO_ACCOUNT_SID;
+        const accountSid = process.env.TWILIO_SID;
         const authToken = process.env.TWILIO_AUTH_TOKEN;
         const fromPhone = process.env.TWILIO_PHONE;
 
@@ -116,7 +116,7 @@ export const sendTwilioSMS = async(phone, otp) => {
  */
 export const sendSmsOTP = async(phone, otp) => {
     try {
-        const smsService = process.env.SMS_SERVICE || 'fast2sms';
+        const smsService = process.env.SMS_SERVICE || 'twilio';
 
         if (smsService === 'twilio') {
             return await sendTwilioSMS(phone, otp);
