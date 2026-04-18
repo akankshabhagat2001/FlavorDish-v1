@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
-import { User, Order } from '../types';
-import { orderService } from '../services/orderService';
+import { User } from '../types';
+import { deliveryPartnerService } from '../services/deliveryPartnerService';
+import { io, Socket } from 'socket.io-client';
 
 interface DeliveryDashboardCompleteProps {
   currentUser: User;
@@ -14,64 +15,138 @@ const DeliveryDashboardComplete: React.FC<DeliveryDashboardCompleteProps> = ({
   onViewChange 
 }) => {
   const [activeTab, setActiveTab] = useState<'overview' | 'active' | 'completed' | 'earnings' | 'profile'>('overview');
-  const [allOrders, setAllOrders] = useState<Order[]>([]);
-  const [acceptedOrders, setAcceptedOrders] = useState<Order[]>([]);
-  const [completedOrders, setCompletedOrders] = useState<Order[]>([]);
-
-  const normalizeOrder = (raw: any): Order => ({
-    _id: raw?._id || '',
-    userId: raw?.customer?._id || raw?.userId || '',
-    restaurantId: raw?.restaurant?._id || raw?.restaurantId || '',
-    restaurantName: raw?.restaurant?.name || raw?.restaurantName || '',
-    items: raw?.items || [],
-    totalAmount: raw?.total || raw?.totalAmount || 0,
-    orderStatus: raw?.status || raw?.orderStatus || 'placed',
-    status: raw?.status || raw?.orderStatus || 'placed',
-    createdAt: raw?.createdAt ? new Date(raw.createdAt).getTime() : Date.now(),
-    deliveryAddress:
-      typeof raw?.deliveryAddress === 'string'
-        ? raw.deliveryAddress
-        : raw?.deliveryAddress?.street || '',
-  });
+  const [activeDeliveries, setActiveDeliveries] = useState<any[]>([]);
+  const [earningsData, setEarningsData] = useState<any>(null);
+  
+  // Rider statuses
+  const [isOnline, setIsOnline] = useState<boolean>(false);
+  const [simulateLocation, setSimulateLocation] = useState<boolean>(false);
+  const [socket, setSocket] = useState<Socket | null>(null);
 
   useEffect(() => {
-    const loadOrders = async () => {
-      try {
-        const response = await orderService.getDeliveryOrders({ page: 1, limit: 200 });
-        const orders = (response?.orders || []).map(normalizeOrder);
-        setAllOrders(orders);
-        setAcceptedOrders(orders.filter(o => (o.orderStatus || o.status) === 'out_for_delivery').slice(0, 3));
-        setCompletedOrders(orders.filter(o => (o.orderStatus || o.status) === 'delivered').slice(0, 5));
-      } catch (err) {
-        console.error('Error loading orders:', err);
+    // Initial fetch
+    fetchActiveDeliveries();
+    fetchEarnings();
+
+    // Socket Initialization
+    const newSocket = io(import.meta.env.VITE_API_URL || 'http://localhost:5000', {
+      query: { userId: currentUser._id }
+    });
+    setSocket(newSocket);
+
+    newSocket.on('delivery:assigned', (data) => {
+      // If the assigned delivery belongs to this rider, refresh deliveries
+      // Since admin maps deliveryPartnerId to their actual object map, we check inside the updated deliveries list
+      // Or we can just blindly fetch. For simplicity, we just fetch:
+      fetchActiveDeliveries();
+      // Optional: native browser notification
+      if (Notification.permission === 'granted') {
+        new Notification('New Delivery Assigned!', { body: `Order \${data.orderId} assigned to you.`});
       }
+    });
+
+    newSocket.on('delivery:status:update', (data) => {
+      // If an admin or system forcefully updates status, reload
+      fetchActiveDeliveries();
+    });
+
+    return () => {
+      newSocket.close();
     };
-    loadOrders();
+  }, [currentUser._id]);
+
+  useEffect(() => {
+    // Ask for notification permission
+    if ("Notification" in window && Notification.permission !== "granted") {
+      Notification.requestPermission();
+    }
   }, []);
 
-  const markDelivered = async (orderId: string) => {
+  // Geolocation effect
+  useEffect(() => {
+    let watchId: number;
+    let intervalId: any;
+
+    if (isOnline && activeDeliveries.length > 0) {
+      if (!simulateLocation && "geolocation" in navigator) {
+        watchId = navigator.geolocation.watchPosition(
+          async (position) => {
+            const { latitude, longitude } = position.coords;
+            // Broadcast location to all active deliveries
+            for (let d of activeDeliveries) {
+              await deliveryPartnerService.updateLocation(d._id, latitude, longitude);
+            }
+          },
+          (error) => console.error("Error watching position", error),
+          { enableHighAccuracy: true, maximumAge: 10000, timeout: 5000 }
+        );
+      } else {
+        // Mock Location Simulator (wandering around Ahmedabad center)
+        let lat = 23.0225;
+        let lng = 72.5714;
+        intervalId = setInterval(async () => {
+          lat += (Math.random() - 0.5) * 0.005;
+          lng += (Math.random() - 0.5) * 0.005;
+          for (let d of activeDeliveries) {
+            await deliveryPartnerService.updateLocation(d._id, lat, lng);
+          }
+        }, 8000);
+      }
+    }
+
+    return () => {
+      if (watchId) navigator.geolocation.clearWatch(watchId);
+      if (intervalId) clearInterval(intervalId);
+    };
+  }, [isOnline, simulateLocation, activeDeliveries]);
+
+
+  const fetchActiveDeliveries = async () => {
     try {
-      await orderService.updateOrderStatus(orderId, 'delivered');
-      const response = await orderService.getDeliveryOrders({ page: 1, limit: 200 });
-      const orders = (response?.orders || []).map(normalizeOrder);
-      setAllOrders(orders);
-      setAcceptedOrders(orders.filter(o => (o.orderStatus || o.status) === 'out_for_delivery').slice(0, 3));
-      setCompletedOrders(orders.filter(o => (o.orderStatus || o.status) === 'delivered').slice(0, 5));
-    } catch (error) {
-      console.error('Failed to mark order delivered:', error);
+      const res = await deliveryPartnerService.getDeliveryOrders();
+      if (res?.data) {
+        setActiveDeliveries(res.data);
+      }
+    } catch (err) {
+      console.error('Failed to fetch active deliveries', err);
     }
   };
 
+  const fetchEarnings = async () => {
+    try {
+      const res = await deliveryPartnerService.getEarnings();
+      if (res?.data) {
+        setEarningsData(res.data);
+      }
+    } catch (err) {
+      console.error('Failed to fetch earnings', err);
+    }
+  };
+
+  const handleUpdateStatus = async (deliveryId: string, status: string) => {
+    try {
+      await deliveryPartnerService.updateDeliveryStatus(deliveryId, status);
+      await fetchActiveDeliveries();
+      if (status === 'delivered') {
+        await fetchEarnings();
+      }
+    } catch (err) {
+      console.error('Failed to update status', err);
+      alert('Could not update status. Please try again.');
+    }
+  };
+
+  // Safe metrics fallbacks
   const stats = {
-    activeDeliveries: acceptedOrders.length,
-    totalDeliveries: completedOrders.length + acceptedOrders.length,
-    totalEarnings: completedOrders.reduce((sum, o) => sum + 50, 0), // ₹50 per delivery
-    averageRating: 4.8,
-    todayEarnings: completedOrders.length * 50,
+    activeDeliveries: activeDeliveries.length,
+    totalDeliveries: earningsData?.totalDeliveries || 0,
+    totalEarnings: earningsData?.totalEarnings || 0,
+    averageRating: currentUser.rating || 4.8,
+    todayEarnings: earningsData?.totalEarnings || 0, // Mocking today vs total for simplicity in phase 2 unless dates filtered
   };
 
   return (
-    <div className="min-h-screen bg-gray-50">
+    <div className="min-h-screen bg-gray-50 flex flex-col">
       {/* Header */}
       <div className="bg-white border-b border-gray-200 sticky top-0 z-40 shadow-sm">
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-4 flex justify-between items-center">
@@ -80,13 +155,21 @@ const DeliveryDashboardComplete: React.FC<DeliveryDashboardCompleteProps> = ({
             <p className="text-xs text-gray-500 font-semibold">Delivery Partner Dashboard</p>
           </div>
           <div className="flex items-center gap-6">
-            <div className="text-right">
+            <div className="flex items-center gap-3 bg-gray-100 p-2 rounded-xl">
+              <span className={`w-3 h-3 rounded-full \${isOnline ? 'bg-green-500' : 'bg-gray-400'}`}></span>
+              <span className="text-sm font-bold text-gray-700">{isOnline ? 'ONLINE' : 'OFFLINE'}</span>
+              <label className="relative inline-flex items-center cursor-pointer ml-2">
+                <input type="checkbox" className="sr-only peer" checked={isOnline} onChange={() => setIsOnline(!isOnline)} />
+                <div className="w-11 h-6 bg-gray-300 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-green-500"></div>
+              </label>
+            </div>
+            <div className="text-right hidden sm:block">
               <p className="text-sm font-bold text-gray-900">{currentUser.name}</p>
-              <p className="text-xs text-gray-500">Delivery Partner</p>
+              <p className="text-xs text-gray-500">Rider</p>
             </div>
             <button 
               onClick={onLogout}
-              className="bg-red-600 hover:bg-red-700 text-white px-4 py-2 rounded-lg font-bold text-sm"
+              className="bg-red-600 hover:bg-red-700 text-white px-4 py-2 rounded-lg font-bold text-sm transition-colors"
             >
               Logout
             </button>
@@ -95,22 +178,22 @@ const DeliveryDashboardComplete: React.FC<DeliveryDashboardCompleteProps> = ({
       </div>
 
       {/* Navigation Tabs */}
-      <div className="bg-white border-b border-gray-200 sticky top-16 z-30">
+      <div className="bg-white border-b border-gray-200 sticky top-[73px] z-30">
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
-          <div className="flex gap-8">
+          <div className="flex gap-4 sm:gap-8 overflow-x-auto no-scrollbar">
             {[
-              { id: 'overview', label: '📊 Overview', icon: 'overview' },
-              { id: 'active', label: '🚗 Active Deliveries', icon: 'active' },
-              { id: 'completed', label: '✅ Completed', icon: 'completed' },
-              { id: 'earnings', label: '💰 Earnings', icon: 'earnings' },
-              { id: 'profile', label: '👤 Profile', icon: 'profile' }
+              { id: 'overview', label: '📊 Overview' },
+              { id: 'active', label: '🚗 Active Deliveries' },
+              { id: 'completed', label: '✅ Completed' },
+              { id: 'earnings', label: '💰 Earnings' },
+              { id: 'profile', label: '👤 Profile' }
             ].map((tab) => (
               <button
                 key={tab.id}
                 onClick={() => setActiveTab(tab.id as any)}
-                className={`py-4 px-2 border-b-2 font-bold text-sm transition-all ${
+                className={`py-4 px-2 border-b-2 font-bold text-sm transition-all whitespace-nowrap \${
                   activeTab === tab.id
-                    ? 'border-green-600 text-green-600'
+                    ? 'border-orange-500 text-orange-600'
                     : 'border-transparent text-gray-600 hover:text-gray-900'
                 }`}
               >
@@ -121,89 +204,103 @@ const DeliveryDashboardComplete: React.FC<DeliveryDashboardCompleteProps> = ({
         </div>
       </div>
 
-      <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-12">
+      <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8 w-full flex-1">
+        {/* Offline Warning */}
+        {!isOnline && activeTab !== 'profile' && (
+          <div className="mb-8 bg-yellow-50 border-l-4 border-yellow-400 p-4 rounded-r-lg">
+            <div className="flex">
+              <div className="flex-shrink-0">
+                <span className="text-yellow-400 text-xl">⚠️</span>
+              </div>
+              <div className="ml-3">
+                <p className="text-sm text-yellow-700 font-bold">
+                  You are currently OFFLINE. Toggle yourself ONLINE in the top menu to broadcast your location and receive ping assignments!
+                </p>
+              </div>
+            </div>
+          </div>
+        )}
+
         {/* Overview Tab */}
         {activeTab === 'overview' && (
-          <div className="space-y-8">
+          <div className="space-y-8 animate-fade-in">
             {/* Key Metrics */}
-            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-5 gap-4">
+            <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
               {[
-                { label: 'Active Deliveries', value: stats.activeDeliveries, icon: '🚗', color: 'blue', bgColor: 'bg-blue-50' },
-                { label: 'Total Deliveries', value: stats.totalDeliveries, icon: '✅', color: 'green', bgColor: 'bg-green-50' },
-                { label: 'Today\'s Earnings', value: `₹${stats.todayEarnings}`, icon: '💵', color: 'green', bgColor: 'bg-green-50' },
-                { label: 'Total Earnings', value: `₹${stats.totalEarnings}`, icon: '💰', color: 'yellow', bgColor: 'bg-yellow-50' },
-                { label: 'Rating', value: stats.averageRating, icon: '⭐', color: 'yellow', bgColor: 'bg-yellow-50' }
+                { label: 'Active Jobs', value: stats.activeDeliveries, icon: '🚗', bgColor: 'bg-blue-50', textColor: 'text-blue-700' },
+                { label: 'Completed', value: stats.totalDeliveries, icon: '✅', bgColor: 'bg-green-50', textColor: 'text-green-700' },
+                { label: 'Earnings', value: `₹\${stats.totalEarnings}`, icon: '💰', bgColor: 'bg-emerald-50', textColor: 'text-emerald-700' },
+                { label: 'Rating', value: stats.averageRating, icon: '⭐', bgColor: 'bg-orange-50', textColor: 'text-orange-700' }
               ].map((metric, i) => (
-                <div key={i} className={`${metric.bgColor} rounded-xl p-4 border border-gray-200`}>
-                  <p className="text-gray-600 text-xs font-bold mb-2">{metric.label}</p>
-                  <p className="text-2xl font-black text-gray-900">{metric.value}</p>
+                <div key={i} className={`\${metric.bgColor} rounded-xl p-4 border border-white`}>
+                  <p className={`\${metric.textColor} text-xs font-bold mb-2 uppercase tracking-wide`}>{metric.label}</p>
+                  <p className="text-3xl font-black text-gray-900">{metric.value}</p>
                 </div>
               ))}
             </div>
 
-            {/* Active Deliveries Quick View */}
-            <div className="bg-white rounded-2xl p-6 border border-gray-200">
-              <h2 className="text-xl font-black mb-4">🚗 Active Deliveries ({acceptedOrders.length})</h2>
-              {acceptedOrders.length === 0 ? (
-                <div className="text-center py-8">
-                  <p className="text-4xl mb-2">🎯</p>
-                  <p className="text-gray-600 font-semibold">No active deliveries. Start accepting orders!</p>
-                </div>
-              ) : (
-                <div className="space-y-3">
-                  {acceptedOrders.map((order, idx) => (
-                    <div key={order._id} className="border border-green-200 bg-green-50 rounded-lg p-4">
-                      <div className="flex justify-between items-start mb-3">
-                        <div>
-                          <p className="font-black text-gray-900">Delivery #{idx + 1}</p>
-                          <p className="text-sm text-gray-600">Order #{order._id.substring(0, 8)}</p>
+            <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+              {/* Active Jobs Quick View */}
+              <div className="bg-white rounded-3xl p-6 shadow-sm border border-gray-100">
+                <h2 className="text-xl font-black mb-4 tracking-tight">Active Assignments</h2>
+                {activeDeliveries.length === 0 ? (
+                  <div className="text-center py-12 bg-gray-50 rounded-2xl border-2 border-dashed border-gray-200">
+                    <p className="text-4xl mb-3">🎯</p>
+                    <p className="text-gray-500 font-semibold">Ready for dispatch.</p>
+                  </div>
+                ) : (
+                  <div className="space-y-4">
+                    {activeDeliveries.slice(0,3).map((delivery) => (
+                      <div key={delivery._id} className="border border-orange-100 bg-orange-50/30 rounded-2xl p-5">
+                        <div className="flex justify-between items-start mb-3">
+                          <div>
+                            <span className="bg-orange-100 text-orange-700 px-3 py-1 rounded-full text-[10px] font-black uppercase tracking-widest">
+                              {delivery.status.replace('_', ' ')}
+                            </span>
+                            <p className="text-lg font-black text-gray-900 mt-2">Order #{String(delivery?.orderId?._id || delivery._id).substring(0,6)}</p>
+                          </div>
+                          <p className="font-black text-xl text-green-600">₹{delivery.deliveryCharge || delivery.baseRate}</p>
                         </div>
-                        <span className="bg-green-200 text-green-700 px-3 py-1 rounded-full text-xs font-bold">
-                          🟢 In Transit
-                        </span>
-                      </div>
-                      <div className="flex justify-between items-end">
-                        <div>
-                          <p className="text-xs text-gray-600">Amount: <span className="font-bold text-gray-900">₹{order.totalAmount}</span></p>
-                          <p className="text-xs text-gray-600 mt-1">Commission: <span className="font-bold text-green-700">₹50</span></p>
+                        <div className="text-sm text-gray-600 space-y-1 mb-4">
+                          <p><strong>From:</strong> {delivery.restaurantId?.name || 'Restaurant'}</p>
+                          <p><strong>To:</strong> {delivery.deliveryLocation?.address}</p>
                         </div>
-                        <button className="bg-green-600 hover:bg-green-700 text-white px-4 py-2 rounded-lg font-bold text-sm">
-                          📍 Navigate
+                        <button onClick={() => setActiveTab('active')} className="w-full bg-gray-900 hover:bg-gray-800 text-white py-3 rounded-xl font-bold text-sm transition-colors">
+                          Manage Delivery
                         </button>
                       </div>
-                    </div>
-                  ))}
-                </div>
-              )}
-            </div>
-
-            {/* Quick Stats */}
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-              <div className="bg-white rounded-2xl p-6 border border-gray-200">
-                <h3 className="font-black text-lg mb-4">📈 Today's Performance</h3>
-                <div className="space-y-3">
-                  <div className="flex justify-between">
-                    <p className="text-gray-600 font-semibold">Deliveries</p>
-                    <p className="font-black text-gray-900">{acceptedOrders.length}</p>
+                    ))}
                   </div>
-                  <div className="flex justify-between">
-                    <p className="text-gray-600 font-semibold">Earnings</p>
-                    <p className="font-black text-green-600">₹{stats.todayEarnings}</p>
-                  </div>
-                  <div className="flex justify-between">
-                    <p className="text-gray-600 font-semibold">Rating</p>
-                    <p className="font-black text-yellow-600">⭐ {stats.averageRating}</p>
-                  </div>
-                </div>
+                )}
               </div>
 
-              <div className="bg-white rounded-2xl p-6 border border-gray-200">
-                <h3 className="font-black text-lg mb-4">💡 Tips to Earn More</h3>
-                <ul className="space-y-2 text-sm text-gray-600">
-                  <li>✓ Accept more orders during peak hours</li>
-                  <li>✓ Maintain high delivery speed</li>
-                  <li>✓ Keep your rating above 4.5</li>
-                  <li>✓ Weekend orders pay 20% more</li>
+              {/* Tools */}
+              <div className="bg-white rounded-3xl p-6 shadow-sm border border-gray-100">
+                <h3 className="font-black text-xl mb-4 tracking-tight">Rider Tools</h3>
+                
+                <div className="p-5 border border-gray-200 rounded-2xl mb-4">
+                  <div className="flex items-center justify-between mb-2">
+                    <h4 className="font-bold text-gray-900">Developer Testing</h4>
+                    <span className="bg-blue-100 text-blue-700 text-[10px] font-black uppercase px-2 py-1 rounded-lg">Mock Tool</span>
+                  </div>
+                  <p className="text-sm text-gray-500 mb-4">
+                    Enable Mock Location to simulate roaming across Ahmedabad without activating browser hardware GPS.
+                  </p>
+                  <label className="flex items-center cursor-pointer">
+                    <div className="relative">
+                      <input type="checkbox" className="sr-only" checked={simulateLocation} onChange={() => setSimulateLocation(!simulateLocation)} />
+                      <div className={`block w-14 h-8 rounded-full \${simulateLocation ? 'bg-blue-500' : 'bg-gray-300'}`}></div>
+                      <div className={`dot absolute left-1 top-1 bg-white w-6 h-6 rounded-full transition \${simulateLocation ? 'transform translate-x-6' : ''}`}></div>
+                    </div>
+                    <div className="ml-3 font-bold text-gray-700">Simulate Location</div>
+                  </label>
+                </div>
+
+                <h4 className="font-bold text-gray-900 mt-6 mb-3">Today's Guide</h4>
+                <ul className="space-y-3 text-sm text-gray-600 bg-gray-50 p-5 rounded-2xl">
+                  <li className="flex items-center gap-2">✓ <span className="flex-1">Avoid heavy traffic near Navrangpura</span></li>
+                  <li className="flex items-center gap-2">✓ <span className="flex-1">Peak pay active from 7PM - 10PM</span></li>
+                  <li className="flex items-center gap-2">✓ <span className="flex-1">Keep food securely insulated</span></li>
                 </ul>
               </div>
             </div>
@@ -212,73 +309,90 @@ const DeliveryDashboardComplete: React.FC<DeliveryDashboardCompleteProps> = ({
 
         {/* Active Deliveries Tab */}
         {activeTab === 'active' && (
-          <div className="bg-white rounded-2xl p-6 border border-gray-200">
-            <h2 className="text-xl font-black mb-6">🚗 Active Deliveries ({acceptedOrders.length})</h2>
-            {acceptedOrders.length === 0 ? (
-              <div className="text-center py-12">
-                <p className="text-4xl mb-4">🎯</p>
-                <p className="text-gray-600 font-semibold">No active deliveries currently</p>
-                <button className="mt-4 bg-green-600 hover:bg-green-700 text-white px-6 py-2 rounded-lg font-bold">
-                  View New Orders
-                </button>
+          <div className="bg-white rounded-3xl p-6 shadow-sm border border-gray-100 animate-slide-up">
+            <h2 className="text-2xl font-black mb-6 tracking-tight flex items-center gap-3">
+              🚗 Dispatch Queue
+              <span className="bg-orange-100 text-orange-700 text-sm py-1 px-3 rounded-full">{activeDeliveries.length} Job(s)</span>
+            </h2>
+            
+            {activeDeliveries.length === 0 ? (
+              <div className="text-center py-16 bg-gray-50 rounded-3xl border border-gray-100">
+                <p className="text-5xl mb-4">🥱</p>
+                <p className="text-gray-500 font-bold text-lg">Your queue is empty right now.</p>
+                <p className="text-gray-400 text-sm mt-1">Make sure you are ONLINE to receive dispatch pings.</p>
               </div>
             ) : (
-              <div className="space-y-4">
-                {acceptedOrders.map((order, idx) => (
-                  <div key={order._id} className="border border-gray-200 rounded-lg p-4 hover:shadow-lg transition-all">
-                    <div className="flex gap-4">
-                      <div className="flex-1">
-                        <div className="flex justify-between items-start mb-2">
-                          <div>
-                            <p className="font-black text-lg text-gray-900">Delivery #{idx + 1}</p>
-                            <p className="text-sm text-gray-600">Order #{order._id.substring(0, 8)}</p>
+              <div className="space-y-6">
+                {activeDeliveries.map((delivery) => (
+                  <div key={delivery._id} className="border border-gray-200 rounded-2xl overflow-hidden hover:border-gray-300 transition-colors">
+                    {/* Header Row */}
+                    <div className="bg-gray-50 px-6 py-4 flex flex-col sm:flex-row justify-between sm:items-center gap-4 border-b border-gray-200">
+                      <div>
+                        <span className="bg-white border border-gray-200 text-gray-700 px-3 py-1 rounded-md text-[10px] font-black uppercase tracking-widest shadow-sm">
+                          Order #{String(delivery?.orderId?._id || delivery._id).substring(0,8)}
+                        </span>
+                        <h3 className="font-black text-xl text-gray-900 mt-2">Payout: ₹{delivery.deliveryCharge || delivery.baseRate}</h3>
+                      </div>
+                      <div className="flex gap-2">
+                         {/* Action Buttons mapping the State Machine */}
+                         {delivery.status === 'accepted' && (
+                           <button onClick={() => handleUpdateStatus(delivery._id, 'picked_up')} className="bg-orange-500 hover:bg-orange-600 text-white px-5 py-2 rounded-xl font-bold text-sm transition-all shadow-lg shadow-orange-500/30">
+                             Mark Picked Up
+                           </button>
+                         )}
+                         {delivery.status === 'picked_up' && (
+                           <button onClick={() => handleUpdateStatus(delivery._id, 'on_the_way')} className="bg-blue-500 hover:bg-blue-600 text-white px-5 py-2 rounded-xl font-bold text-sm transition-all shadow-lg shadow-blue-500/30">
+                             Mark On The Way
+                           </button>
+                         )}
+                         {delivery.status === 'on_the_way' && (
+                           <button onClick={() => handleUpdateStatus(delivery._id, 'delivered')} className="bg-green-500 hover:bg-green-600 text-white px-5 py-2 rounded-xl font-bold text-sm transition-all shadow-lg shadow-green-500/30">
+                             Mark Delivered
+                           </button>
+                         )}
+                      </div>
+                    </div>
+                    
+                    {/* Body Row */}
+                    <div className="p-6 flex flex-col md:flex-row gap-6">
+                      <div className="flex-1 space-y-4">
+                        <div className="flex items-start gap-4">
+                          <div className="bg-gray-100 p-3 rounded-xl text-gray-500"><i className="fa-solid fa-store"></i></div>
+                          <div className="flex-1">
+                            <p className="text-[10px] text-gray-500 font-bold uppercase tracking-widest">Pickup</p>
+                            <p className="font-black text-gray-900">{delivery.restaurantId?.name || 'Restaurant'}</p>
+                            <p className="text-sm text-gray-600">{delivery.pickupLocation?.address || delivery.restaurantId?.address}</p>
                           </div>
-                          <span className="bg-green-100 text-green-700 px-3 py-1 rounded-full text-xs font-bold">
-                            In Transit
-                          </span>
                         </div>
-                        
-                        <div className="grid grid-cols-2 gap-4 mt-3 text-sm">
-                          <div>
-                            <p className="text-gray-600">Amount</p>
-                            <p className="font-black text-gray-900">₹{order.totalAmount}</p>
-                          </div>
-                          <div>
-                            <p className="text-gray-600">Commission</p>
-                            <p className="font-black text-green-600">₹50</p>
-                          </div>
-                        </div>
-
-                        {/* Delivery Progress */}
-                        <div className="mt-4 space-y-2">
-                          <div className="flex items-center gap-2">
-                            <div className="w-6 h-6 rounded-full bg-green-600 text-white flex items-center justify-center text-xs font-bold">✓</div>
-                            <p className="text-sm font-semibold text-gray-900">Picked up from restaurant</p>
-                          </div>
-                          <div className="flex items-center gap-2">
-                            <div className="w-6 h-6 rounded-full bg-yellow-600 text-white flex items-center justify-center text-xs font-bold">🚗</div>
-                            <p className="text-sm font-semibold text-gray-900">On the way to customer</p>
-                          </div>
-                          <div className="flex items-center gap-2">
-                            <div className="w-6 h-6 rounded-full bg-gray-300 flex items-center justify-center text-xs font-bold">📍</div>
-                            <p className="text-sm font-semibold text-gray-600">Arriving soon</p>
+                        <div className="w-0.5 h-6 bg-gray-200 ml-6"></div>
+                        <div className="flex items-start gap-4">
+                          <div className="bg-orange-100 p-3 rounded-xl text-orange-600"><i className="fa-solid fa-location-dot"></i></div>
+                          <div className="flex-1">
+                            <p className="text-[10px] text-gray-500 font-bold uppercase tracking-widest">Drop-off</p>
+                            <p className="font-black text-gray-900">{delivery.customerId?.name || 'Customer'}</p>
+                            <p className="text-sm text-gray-600">{delivery.deliveryLocation?.address}</p>
+                            <p className="text-sm text-gray-500 font-bold mt-1">📞 {delivery.customerId?.phone || 'Hidden'}</p>
                           </div>
                         </div>
                       </div>
                       
-                      <div className="flex flex-col gap-2">
-                        <button className="bg-green-600 hover:bg-green-700 text-white px-4 py-2 rounded-lg font-bold text-sm whitespace-nowrap">
-                          📍 Navigate
-                        </button>
-                        <button className="bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded-lg font-bold text-sm whitespace-nowrap">
-                          📞 Call
-                        </button>
-                        <button
-                          onClick={() => markDelivered(order._id)}
-                          className="bg-gray-600 hover:bg-gray-700 text-white px-4 py-2 rounded-lg font-bold text-sm whitespace-nowrap"
-                        >
-                          ✅ Delivered
-                        </button>
+                      {/* Vertical status timeline */}
+                      <div className="w-full md:w-64 bg-gray-50 rounded-2xl p-5 border border-gray-100">
+                        <h4 className="text-[10px] font-black uppercase tracking-widest text-gray-400 mb-4">Journey</h4>
+                        <div className="space-y-4 relative before:absolute before:inset-0 before:ml-2.5 before:-translate-x-px md:before:mx-auto md:before:translate-x-0 before:h-full before:w-0.5 before:bg-gradient-to-b before:from-transparent before:via-slate-300 before:to-transparent">
+                           <div className="relative flex items-center justify-between md:justify-normal md:odd:flex-row-reverse group is-active">
+                             <div className={`flex items-center justify-center w-5 h-5 rounded-full border-2 bg-white \${['accepted','picked_up','on_the_way'].includes(delivery.status) ? 'border-orange-500 text-orange-500' : 'border-gray-300'}`}>✓</div>
+                             <p className={`pl-3 text-sm font-bold \${['accepted','picked_up','on_the_way'].includes(delivery.status) ? 'text-gray-900' : 'text-gray-400'}`}>Assigned</p>
+                           </div>
+                           <div className="relative flex items-center justify-between md:justify-normal md:odd:flex-row-reverse group is-active">
+                             <div className={`flex items-center justify-center w-5 h-5 rounded-full border-2 bg-white \${['picked_up','on_the_way'].includes(delivery.status) ? 'border-orange-500 text-orange-500' : 'border-gray-300'}`}></div>
+                             <p className={`pl-3 text-sm font-bold \${['picked_up','on_the_way'].includes(delivery.status) ? 'text-gray-900' : 'text-gray-400'}`}>Picked Up</p>
+                           </div>
+                           <div className="relative flex items-center justify-between md:justify-normal md:odd:flex-row-reverse group is-active">
+                             <div className={`flex items-center justify-center w-5 h-5 rounded-full border-2 bg-white \${delivery.status === 'on_the_way' ? 'border-orange-500 text-orange-500' : 'border-gray-300'}`}></div>
+                             <p className={`pl-3 text-sm font-bold \${delivery.status === 'on_the_way' ? 'text-gray-900' : 'text-gray-400'}`}>On The Way</p>
+                           </div>
+                        </div>
                       </div>
                     </div>
                   </div>
@@ -288,162 +402,64 @@ const DeliveryDashboardComplete: React.FC<DeliveryDashboardCompleteProps> = ({
           </div>
         )}
 
-        {/* Completed Deliveries Tab */}
+        {/* Completed Tab - Stub for Phase 3/Extension, using total metric for now */}
         {activeTab === 'completed' && (
-          <div className="bg-white rounded-2xl p-6 border border-gray-200">
-            <h2 className="text-xl font-black mb-6">✅ Completed Deliveries ({completedOrders.length})</h2>
-            <div className="space-y-3">
-              {completedOrders.map((order) => (
-                <div key={order._id} className="border border-gray-200 rounded-lg p-4 hover:bg-gray-50 transition-all">
-                  <div className="flex justify-between items-start">
-                    <div>
-                      <p className="font-bold text-gray-900">Order #{order._id.substring(0, 8)}</p>
-                      <p className="text-sm text-gray-600 mt-1">Amount: ₹{order.totalAmount} • Commission: ₹50</p>
-                    </div>
-                    <div className="text-right">
-                      <span className="block text-xs font-bold text-green-700 bg-green-100 px-3 py-1 rounded-full mb-2">
-                        ✅ Delivered
-                      </span>
-                      <button className="text-xs font-bold text-blue-600 hover:text-blue-700">
-                        Rate Order
-                      </button>
-                    </div>
-                  </div>
-                </div>
-              ))}
-            </div>
+          <div className="bg-white rounded-3xl p-6 shadow-sm border border-gray-100 flex items-center justify-center h-64">
+             <div className="text-center">
+                 <h2 className="text-2xl font-black text-gray-900">Completed Orders Module</h2>
+                 <p className="text-gray-500 mt-2">You have completed {stats.totalDeliveries} historical orders.</p>
+                 <p className="text-sm text-gray-400 mt-4">(Extended views loading in subsequent updates)</p>
+             </div>
           </div>
         )}
 
         {/* Earnings Tab */}
         {activeTab === 'earnings' && (
-          <div className="space-y-6">
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-              <div className="bg-white rounded-2xl p-6 border border-gray-200">
-                <h3 className="font-black text-lg mb-4">💰 Earnings Summary</h3>
-                <div className="space-y-3">
-                  <div className="flex justify-between items-center pb-3 border-b border-gray-200">
-                    <p className="text-gray-600 font-semibold">Today</p>
-                    <p className="font-black text-green-600 text-lg">₹{stats.todayEarnings}</p>
-                  </div>
-                  <div className="flex justify-between items-center pb-3 border-b border-gray-200">
-                    <p className="text-gray-600 font-semibold">This Week</p>
-                    <p className="font-black text-green-600 text-lg">₹{stats.todayEarnings * 4}</p>
-                  </div>
-                  <div className="flex justify-between items-center pb-3 border-b border-gray-200">
-                    <p className="text-gray-600 font-semibold">This Month</p>
-                    <p className="font-black text-green-600 text-lg">₹{stats.totalEarnings}</p>
-                  </div>
-                  <div className="flex justify-between items-center pt-2">
-                    <p className="text-gray-900 font-black">Total Lifetime</p>
-                    <p className="font-black text-green-700 text-xl">₹{stats.totalEarnings}</p>
-                  </div>
-                </div>
-              </div>
+          <div className="bg-white rounded-3xl p-6 shadow-sm border border-gray-100">
+             <h2 className="text-2xl font-black mb-6 tracking-tight">Wallet & Earnings</h2>
+             <div className="bg-[#0F1012] text-white p-8 rounded-3xl relative overflow-hidden">
+                <div className="absolute top-0 right-0 w-64 h-64 bg-emerald-500 rounded-full blur-[100px] opacity-20 -mr-20 -mt-20"></div>
+                
+                <p className="text-gray-400 font-bold uppercase tracking-widest text-sm mb-2">Available Balance</p>
+                <p className="text-6xl font-black">₹{stats.totalEarnings}</p>
 
-              <div className="bg-white rounded-2xl p-6 border border-gray-200">
-                <h3 className="font-black text-lg mb-4">📊 Delivery Stats</h3>
-                <div className="space-y-3">
-                  <div>
-                    <p className="text-sm text-gray-600 font-semibold mb-1">Completion Rate</p>
-                    <div className="w-full bg-gray-200 rounded-full h-2">
-                      <div className="bg-green-600 h-2 rounded-full" style={{width: '98%'}}></div>
-                    </div>
-                    <p className="text-xs text-gray-600 mt-1">98%</p>
-                  </div>
-                  <div>
-                    <p className="text-sm text-gray-600 font-semibold mb-1">Average Rating</p>
-                    <div className="flex items-center gap-2">
-                      <div className="text-xl font-black text-yellow-500">⭐ {stats.averageRating}</div>
-                      <p className="text-xs text-gray-600">/5.0</p>
-                    </div>
-                  </div>
-                  <div>
-                    <p className="text-sm text-gray-600 font-semibold mb-1">Total Deliveries</p>
-                    <p className="text-xl font-black text-blue-600">{stats.totalDeliveries}</p>
-                  </div>
+                <div className="flex gap-4 mt-8">
+                  <button className="bg-emerald-500 hover:bg-emerald-400 text-black px-6 py-3 rounded-xl font-black tracking-wide transition-colors">
+                    Withdraw to Bank
+                  </button>
+                  <button className="bg-white/10 hover:bg-white/20 px-6 py-3 rounded-xl font-bold transition-colors">
+                    View History
+                  </button>
                 </div>
-              </div>
-            </div>
-
-            {/* Earning Breakdown */}
-            <div className="bg-white rounded-2xl p-6 border border-gray-200">
-              <h3 className="font-black text-lg mb-4">Recent Earnings</h3>
-              <div className="space-y-2">
-                {completedOrders.length > 0 ? completedOrders.slice(0, 5).map((order) => (
-                  <div key={order._id} className="flex justify-between items-center p-3 bg-gray-50 rounded-lg">
-                    <p className="font-semibold text-gray-900">Order #{order._id.substring(0, 8)}</p>
-                    <p className="font-black text-green-600">+ ₹50</p>
-                  </div>
-                )) : (
-                  <div className="text-center py-4 text-gray-500">
-                    No recent earnings yet.
-                  </div>
-                )}
-              </div>
-            </div>
+             </div>
           </div>
         )}
 
         {/* Profile Tab */}
         {activeTab === 'profile' && (
-          <div className="max-w-2xl mx-auto">
-            <div className="bg-white rounded-2xl p-8 border border-gray-200 space-y-6">
-              <h2 className="text-2xl font-black mb-6">My Profile</h2>
-              
-              <div>
-                <label className="block text-sm font-bold text-gray-600 mb-2">Name</label>
-                <input
-                  type="text"
-                  defaultValue={currentUser.name}
-                  className="w-full px-4 py-2 border border-gray-300 rounded-lg font-semibold focus:outline-none focus:ring-2 focus:ring-green-600"
-                />
-              </div>
-
-              <div>
-                <label className="block text-sm font-bold text-gray-600 mb-2">Phone</label>
-                <input
-                  type="tel"
-                  defaultValue={currentUser.phone || ''}
-                  className="w-full px-4 py-2 border border-gray-300 rounded-lg font-semibold focus:outline-none focus:ring-2 focus:ring-green-600"
-                />
-              </div>
-
-              <div>
-                <label className="block text-sm font-bold text-gray-600 mb-2">Email</label>
-                <input
-                  type="email"
-                  defaultValue={currentUser.email}
-                  className="w-full px-4 py-2 border border-gray-300 rounded-lg font-semibold focus:outline-none focus:ring-2 focus:ring-green-600"
-                />
-              </div>
-
-              <div className="bg-green-50 rounded-lg p-4 border border-green-200">
-                <p className="font-bold text-green-900 mb-3">📊 Your Statistics</p>
-                <div className="grid grid-cols-2 gap-4">
-                  <div>
-                    <p className="text-sm text-green-700">Total Deliveries</p>
-                    <p className="font-black text-2xl text-green-900">{stats.totalDeliveries}</p>
-                  </div>
-                  <div>
-                    <p className="text-sm text-green-700">Total Earnings</p>
-                    <p className="font-black text-2xl text-green-900">₹{stats.totalEarnings}</p>
-                  </div>
-                  <div>
-                    <p className="text-sm text-green-700">Avg Rating</p>
-                    <p className="font-black text-2xl text-green-900">⭐ {stats.averageRating}</p>
-                  </div>
-                  <div>
-                    <p className="text-sm text-green-700">Success Rate</p>
-                    <p className="font-black text-2xl text-green-900">98%</p>
-                  </div>
+          <div className="max-w-2xl mx-auto bg-white rounded-3xl p-8 shadow-sm border border-gray-100 animate-slide-up">
+              <h2 className="text-2xl font-black mb-8 tracking-tight">Rider Account</h2>
+              <div className="flex items-center gap-6 mb-8">
+                <div className="w-24 h-24 bg-gray-200 rounded-full flex items-center justify-center text-4xl overflow-hidden border-4 border-white shadow-lg">
+                  👤
+                </div>
+                <div>
+                  <h3 className="text-2xl font-black text-gray-900">{currentUser.name}</h3>
+                  <p className="text-gray-500 font-bold">{currentUser.email}</p>
+                  <p className="text-orange-500 font-black text-sm mt-1">★ {stats.averageRating} Rating</p>
                 </div>
               </div>
-
-              <button className="w-full bg-green-600 hover:bg-green-700 text-white px-6 py-3 rounded-lg font-black transition-all">
-                Save Changes
-              </button>
-            </div>
+              <hr className="border-gray-100 mb-8" />
+              <div className="space-y-4">
+                 <div>
+                   <label className="text-[10px] uppercase font-black tracking-widest text-gray-400 block mb-2">Registered Phone</label>
+                   <input type="text" readOnly value={currentUser.phone || 'Not Provided'} className="w-full bg-gray-50 border border-gray-200 rounded-xl px-4 py-3 font-semibold text-gray-700" />
+                 </div>
+                 <div>
+                   <label className="text-[10px] uppercase font-black tracking-widest text-gray-400 block mb-2">Vehicle Configuration</label>
+                   <input type="text" readOnly value="Two-Wheeler (Motorcycle)" className="w-full bg-gray-50 border border-gray-200 rounded-xl px-4 py-3 font-semibold text-gray-700" />
+                 </div>
+              </div>
           </div>
         )}
       </div>
